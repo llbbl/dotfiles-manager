@@ -18,3 +18,7 @@ just build-versioned   # build ./bin/dotfiles with version info baked in
 Run `just --list` to see all available recipes (build, test, lint, migrations, version bumps, etc.).
 
 Requirements are pinned in `mise.toml` (Go 1.25.7, just, goose). Activate them with `mise install`.
+
+## License
+
+Licensed under the [Functional Source License, Version 1.1, MIT Future License](./LICENSE.md) (FSL-1.1-MIT). All non-Competing Use is permitted today; the Software additionally becomes available under the MIT license on the second anniversary of each release.
