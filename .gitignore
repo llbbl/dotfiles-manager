@@ -1,0 +1,31 @@
+# Claude / AI tooling
+.claude/
+.claude.md
+CLAUDE.md
+.agents.md
+AGENTS.md
+.beads/
+_/
+
+# Go build artifacts
+/dotfiles
+/dotfiles-manager
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Env / local config
+.env
+.env.local
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp

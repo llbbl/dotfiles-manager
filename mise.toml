@@ -1,0 +1,9 @@
+[tools]
+go     = "1.25.7"
+just   = "1.46.0"
+goose  = "latest"
+
+[env]
+# Default state DB lives in the user's data dir; override per-shell if needed.
+GOOSE_DRIVER     = "sqlite3"
+GOOSE_MIGRATION_DIR = "internal/store/migrations"
