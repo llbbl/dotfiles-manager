@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
@@ -52,10 +53,29 @@ func newTrackCmd() *cobra.Command {
 			}
 			defer s.Close()
 
+			mgr, mgrErr := newSnapshotManager(c.Context(), s)
+			if mgrErr != nil {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: snapshot manager unavailable: %v\n", mgrErr)
+			}
+
+			var snapErr error
 			f, err := tracker.Track(c.Context(), s, canonical, display, tracker.TrackOptions{
 				SkipSecretCheck: force,
 				Reset:           reset,
+				AfterCommit: func(ctx context.Context, file tracker.File) error {
+					if mgr == nil {
+						return nil
+					}
+					f := file
+					if _, e := mgr.Snapshot(ctx, file.Path, &f, snapshot.ReasonTrack); e != nil {
+						snapErr = e
+					}
+					return nil
+				},
 			})
+			if snapErr != nil {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: failed to snapshot %s: %v\n", display, snapErr)
+			}
 			if err != nil {
 				var secErr *tracker.SecretsError
 				if errors.As(err, &secErr) {
@@ -96,4 +116,16 @@ func openStore(ctx context.Context) (*store.Store, error) {
 		return nil, fmt.Errorf("config not loaded")
 	}
 	return store.New(ctx, cfg)
+}
+
+func newSnapshotManager(ctx context.Context, s *store.Store) (*snapshot.Manager, error) {
+	cfg := config.FromContext(ctx)
+	if cfg == nil {
+		return nil, fmt.Errorf("config not loaded")
+	}
+	return snapshot.New(s, snapshot.Config{
+		Dir:           cfg.Backup.Dir,
+		MaxTotalMB:    cfg.Backup.MaxTotalMB,
+		RetentionDays: cfg.Backup.RetentionDays,
+	})
 }

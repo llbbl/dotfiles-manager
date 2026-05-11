@@ -27,6 +27,17 @@ extra_args = []
 # JSONL action log written by `dotfiles sync` and other writes.
 path = "~/.local/share/dotfiles/logs/actions.jsonl"
 
+[backup]
+# Pre-modification snapshot store. Blobs are content-addressed (sha256)
+# and deduplicated. See `dotfiles backups`, `dotfiles restore`, and
+# `dotfiles prune`.
+dir            = "~/.local/share/dotfiles/backups"
+# Soft cap on total blob bytes; 0 = unlimited.
+max_total_mb   = 500
+# Retention window; older snapshots are evicted by `prune`. 0 = forever.
+# The most recent snapshot per file is always preserved regardless.
+retention_days = 90
+
 # State (libSQL/Turso) is configured exclusively via environment variables:
 #   TURSO_DATABASE_URL   libsql://<db>-<org>.turso.io   (or unset for embedded file)
 #   TURSO_AUTH_TOKEN     long-lived token from `turso db tokens create <db>`

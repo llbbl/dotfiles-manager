@@ -312,6 +312,43 @@ func TestTrack_SecretPreflight(t *testing.T) {
 	}
 }
 
+func TestTrack_TakesInitialSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	withCwd(t, dir)
+	t.Setenv("HOME", dir)
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := filepath.Join(dir, "snap.txt")
+	writeFile(t, p, "snapshot-me\n")
+	canon, disp, err := Resolve(p)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	var calledWith File
+	called := 0
+	_, err = Track(ctx, s, canon, disp, TrackOptions{
+		AfterCommit: func(_ context.Context, f File) error {
+			called++
+			calledWith = f
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Track: %v", err)
+	}
+	if called != 1 {
+		t.Errorf("AfterCommit called %d times, want 1", called)
+	}
+	if calledWith.Path != canon {
+		t.Errorf("AfterCommit path = %q", calledWith.Path)
+	}
+	if calledWith.ID == 0 {
+		t.Errorf("AfterCommit File.ID = 0")
+	}
+}
+
 func TestHashFile_Stable(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x")

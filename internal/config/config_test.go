@@ -118,6 +118,41 @@ func TestTursoDatabaseURLEnvOverride(t *testing.T) {
 	}
 }
 
+func TestBackupConfig_DefaultsAndRoundtrip(t *testing.T) {
+	cfg := Defaults()
+	if cfg.Backup.MaxTotalMB != 500 {
+		t.Errorf("MaxTotalMB default = %d, want 500", cfg.Backup.MaxTotalMB)
+	}
+	if cfg.Backup.RetentionDays != 90 {
+		t.Errorf("RetentionDays default = %d, want 90", cfg.Backup.RetentionDays)
+	}
+	if cfg.Backup.Dir == "" || strings.Contains(cfg.Backup.Dir, "~") {
+		t.Errorf("backup.dir not expanded: %q", cfg.Backup.Dir)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	cfg.Backup.Dir = "/var/tmp/dfm-backups"
+	cfg.Backup.MaxTotalMB = 1024
+	cfg.Backup.RetentionDays = 30
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Backup.Dir != "/var/tmp/dfm-backups" {
+		t.Errorf("backup.dir mismatch: %q", loaded.Backup.Dir)
+	}
+	if loaded.Backup.MaxTotalMB != 1024 {
+		t.Errorf("MaxTotalMB mismatch: %d", loaded.Backup.MaxTotalMB)
+	}
+	if loaded.Backup.RetentionDays != 30 {
+		t.Errorf("RetentionDays mismatch: %d", loaded.Backup.RetentionDays)
+	}
+}
+
 func TestValidate_RejectsUnknownProvider(t *testing.T) {
 	cfg := Defaults()
 	cfg.AI.Provider = "bogus"

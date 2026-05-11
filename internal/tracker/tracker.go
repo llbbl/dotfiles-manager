@@ -46,6 +46,11 @@ type StatusReport struct {
 type TrackOptions struct {
 	SkipSecretCheck bool
 	Reset           bool
+	// AfterCommit is invoked after the tracked_files row is inserted or
+	// updated, with the resulting File. Errors are surfaced via the
+	// returned (File, error) pair to the caller; if non-nil, the row is
+	// still committed. Used by M3.5 to take a ReasonTrack snapshot.
+	AfterCommit func(ctx context.Context, f File) error
 }
 
 var (
@@ -298,7 +303,12 @@ func Track(ctx context.Context, s *store.Store, canonical, display string, opts 
 		existing.LastHash = hash
 		existing.AddedAt = now
 		existing.DisplayPath = display
-		return *existing, nil
+		f := *existing
+		var cbErr error
+		if opts.AfterCommit != nil {
+			cbErr = opts.AfterCommit(ctx, f)
+		}
+		return f, cbErr
 	}
 
 	res, err := s.DB().ExecContext(ctx,
@@ -308,13 +318,18 @@ func Track(ctx context.Context, s *store.Store, canonical, display string, opts 
 		return File{}, fmt.Errorf("insert tracked_files: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	return File{
+	f := File{
 		ID:          id,
 		Path:        canonical,
 		DisplayPath: display,
 		AddedAt:     now,
 		LastHash:    hash,
-	}, nil
+	}
+	var cbErr error
+	if opts.AfterCommit != nil {
+		cbErr = opts.AfterCommit(ctx, f)
+	}
+	return f, cbErr
 }
 
 // Untrack removes a tracked_files row by canonical, display, or relative

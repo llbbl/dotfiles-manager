@@ -12,10 +12,17 @@ import (
 )
 
 type Config struct {
-	Repo  RepoConfig  `toml:"repo"`
-	AI    AIConfig    `toml:"ai"`
-	Log   LogConfig   `toml:"log"`
-	State StateConfig `toml:"state"`
+	Repo   RepoConfig   `toml:"repo"`
+	AI     AIConfig     `toml:"ai"`
+	Log    LogConfig    `toml:"log"`
+	State  StateConfig  `toml:"state"`
+	Backup BackupConfig `toml:"backup"`
+}
+
+type BackupConfig struct {
+	Dir           string `toml:"dir"`
+	MaxTotalMB    int64  `toml:"max_total_mb"`
+	RetentionDays int    `toml:"retention_days"`
 }
 
 type RepoConfig struct {
@@ -122,6 +129,11 @@ func Defaults() *Config {
 		State: StateConfig{
 			URL: "file://" + filepath.Join(data, "dotfiles", "state.db"),
 		},
+		Backup: BackupConfig{
+			Dir:           filepath.Join(data, "dotfiles", "backups"),
+			MaxTotalMB:    500,
+			RetentionDays: 90,
+		},
 	}
 }
 
@@ -140,6 +152,7 @@ func Load(path string) (*Config, error) {
 	cfg.Repo.Local = expandHome(cfg.Repo.Local)
 	cfg.Log.Path = expandHome(cfg.Log.Path)
 	cfg.State.URL = expandHome(cfg.State.URL)
+	cfg.Backup.Dir = expandHome(cfg.Backup.Dir)
 
 	if v := os.Getenv("TURSO_DATABASE_URL"); v != "" {
 		cfg.State.URL = v
