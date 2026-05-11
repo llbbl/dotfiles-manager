@@ -1,23 +1,23 @@
 # dotfiles-manager
 
-A single distributable Go binary (`dotfiles`) that helps you manage, version, and improve your dotfiles. It tracks every change in a private GitHub repository so there is a full audit log of edits, AI suggestions, and who or what changed what.
+A single distributable Go binary (`dotfiles`) that helps you manage, version, and improve your dotfiles. Every change is mirrored into a private GitHub backup repository with a full audit trail, and an AI coding agent (default: Claude Code) can propose improvements as reviewable patches.
 
-Status: pre-alpha, milestone M0
+Status: pre-alpha — APIs and CLI flags may change without notice.
 
 ## Quickstart
 
 ```sh
-just install           # tidy and download Go module deps
-just dev version       # run the CLI from source
-just build-versioned   # build ./bin/dotfiles with version info baked in
+just install              # tidy and download Go module deps
+just build-versioned      # build ./bin/dotfiles with version info baked in
 ./bin/dotfiles version
+./bin/dotfiles --help     # full command surface
 ```
 
-## Development
+## Documentation
 
-Run `just --list` to see all available recipes (build, test, lint, migrations, version bumps, etc.).
-
-Requirements are pinned in `mise.toml` (Go 1.25.7, just). Activate them with `mise install`.
+- [Development](./docs/development.md) — local setup, environment variables, testing, contribution workflow.
+- [Commands](./docs/commands.md) — full `dotfiles` CLI reference.
+- [Architecture](./docs/architecture.md) — what the moving parts are and how they fit together.
 
 ## License
 
