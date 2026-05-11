@@ -1,0 +1,99 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"text/tabwriter"
+
+	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/store"
+	"github.com/llbbl/dotfiles-manager/internal/tracker"
+	"github.com/spf13/cobra"
+)
+
+const (
+	exitResolveErr    = 2
+	exitSecretsErr    = 3
+	exitAlreadyOrMiss = 4
+)
+
+func newTrackCmd() *cobra.Command {
+	var (
+		force        bool
+		reset        bool
+		displayFlag  string
+	)
+	cmd := &cobra.Command{
+		Use:   "track <path>",
+		Short: "Begin managing a file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			canonical, display, err := tracker.Resolve(args[0])
+			if err != nil {
+				fmt.Fprintln(c.ErrOrStderr(), err)
+				os.Exit(exitResolveErr)
+			}
+
+			if suffix, ok := tracker.HasBinarySuffix(canonical); ok && !force {
+				fmt.Fprintf(c.ErrOrStderr(),
+					"refusing %s: suspicious suffix %q (use --force to override)\n", display, suffix)
+				os.Exit(exitResolveErr)
+			}
+
+			if displayFlag != "" {
+				display = displayFlag
+			}
+
+			s, err := openStore(c.Context())
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+
+			f, err := tracker.Track(c.Context(), s, canonical, display, tracker.TrackOptions{
+				SkipSecretCheck: force,
+				Reset:           reset,
+			})
+			if err != nil {
+				var secErr *tracker.SecretsError
+				if errors.As(err, &secErr) {
+					tw := tabwriter.NewWriter(c.ErrOrStderr(), 0, 0, 2, ' ', 0)
+					fmt.Fprintln(tw, "RULE\tLINE\tEXCERPT")
+					for _, fi := range secErr.Result.Findings {
+						fmt.Fprintf(tw, "%s\t%d\t%s\n", fi.Rule, fi.Line, fi.Excerpt)
+					}
+					tw.Flush()
+					fmt.Fprintln(c.ErrOrStderr(), "track aborted: secrets detected (--force to override)")
+					os.Exit(exitSecretsErr)
+				}
+				if errors.Is(err, tracker.ErrAlreadyTracked) {
+					fmt.Fprintf(c.ErrOrStderr(),
+						"already tracked: %s (use --reset to refresh)\n", display)
+					os.Exit(exitAlreadyOrMiss)
+				}
+				return err
+			}
+
+			short := f.LastHash
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			fmt.Fprintf(c.OutOrStdout(), "tracked %s (sha256: %s)\n", f.DisplayPath, short)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "Track even if secrets are detected")
+	cmd.Flags().BoolVar(&reset, "reset", false, "Re-track an existing file; refresh hash + added_at")
+	cmd.Flags().StringVar(&displayFlag, "display", "", "Override the display path")
+	return cmd
+}
+
+func openStore(ctx context.Context) (*store.Store, error) {
+	cfg := config.FromContext(ctx)
+	if cfg == nil {
+		return nil, fmt.Errorf("config not loaded")
+	}
+	return store.New(ctx, cfg)
+}
