@@ -7,6 +7,16 @@
 // Callers are responsible for masking sensitive values BEFORE passing
 // them in. Audit does not scan field values for secrets, and never
 // marshals a *config.Config directly.
+//
+// Canonical event names (action strings) used in this project:
+//
+//	track, untrack, edit, append, backup, restore, prune,
+//	sync, sync.file, init, scan, suggest, apply, apply_failed, reject,
+//	snapshot.created, snapshot.restored, snapshot.pruned.
+//
+// Privacy rules (see docs/architecture.md): never pass secrets, prompts,
+// AI responses, diff bodies, or file contents through this package — log
+// paths, IDs, hashes, counts, and durations only.
 package audit
 
 import (

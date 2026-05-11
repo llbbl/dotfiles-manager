@@ -37,6 +37,7 @@ const (
 	ReasonManual   Reason = "manual"
 	ReasonPreApply Reason = "pre-apply"
 	ReasonPreSync  Reason = "pre-sync"
+	ReasonPreEdit  Reason = "pre-edit"
 )
 
 // Snapshot describes one stored backup.

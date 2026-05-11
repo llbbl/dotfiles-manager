@@ -127,6 +127,8 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(),
 		newTrackCmd(),
 		newUntrackCmd(),
+		newEditCmd(),
+		newAppendCmd(),
 		newListCmd(),
 		newStatusCmd(),
 		newBackupCmd(),
