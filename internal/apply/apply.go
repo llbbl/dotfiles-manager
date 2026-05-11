@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -202,6 +203,8 @@ func (r *Repo) Apply(ctx context.Context, mgr *snapshot.Manager, id string) (App
 		return ApplyResult{}, err
 	}
 
+	dlog.From(ctx).Info("apply starting", "suggestion_id", id, "display", file.DisplayPath)
+
 	orig, err := os.ReadFile(file.Path)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("read %s: %w", file.Path, err)
@@ -226,15 +229,24 @@ func (r *Repo) Apply(ctx context.Context, mgr *snapshot.Manager, id string) (App
 	if err != nil {
 		// Validation failed; do NOT touch the file on disk. Surface the
 		// snapshot id so the user has a paper trail.
+		dlog.From(ctx).Warn("apply failed after snapshot",
+			"suggestion_id", id, "snapshot_id", snap.ID, "err", err.Error())
 		return ApplyResult{}, &PostSnapshotError{SnapshotID: snap.ID, Err: err}
 	}
 
 	if err := atomicWrite(file.Path, newBytes); err != nil {
+		dlog.From(ctx).Warn("apply failed after snapshot",
+			"suggestion_id", id, "snapshot_id", snap.ID, "err", err.Error())
 		return ApplyResult{}, &PostSnapshotError{SnapshotID: snap.ID, Err: err}
 	}
 
 	sum := sha256.Sum256(newBytes)
 	newHash := hex.EncodeToString(sum[:])
+	short := newHash
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	dlog.From(ctx).Debug("hunks applied", "n", hunks, "new_hash", short)
 
 	if _, err := r.s.DB().ExecContext(ctx,
 		`UPDATE tracked_files SET last_hash = ? WHERE id = ?`, newHash, file.ID); err != nil {

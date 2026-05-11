@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/pressly/goose/v3"
 )
 
@@ -28,6 +29,7 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 	if err := configureGoose(); err != nil {
 		return err
 	}
+	dlog.From(ctx).Debug("running goose", "command", "up")
 	if err := goose.RunContext(ctx, "up", db, migrationsDir); err != nil {
 		return fmt.Errorf("goose up: %w", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 )
 
 var (
@@ -176,7 +177,13 @@ func (r *Repo) CommitAll(ctx context.Context, message string) (CommitResult, err
 		return CommitResult{}, err
 	}
 	branch, _ := r.currentBranch(ctx)
-	return CommitResult{SHA: strings.TrimSpace(sha), Branch: branch}, nil
+	res := CommitResult{SHA: strings.TrimSpace(sha), Branch: branch}
+	short := res.SHA
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	dlog.From(ctx).Debug("git commit", "empty", res.Empty, "sha", short)
+	return res, nil
 }
 
 func (r *Repo) currentBranch(ctx context.Context) (string, error) {
@@ -229,6 +236,7 @@ func (r *Repo) PushForce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	dlog.From(ctx).Warn("force-push with lease", "path", r.path)
 	_, _, err = runGit(ctx, r.path, "push", "--force-with-lease", "-u", "origin", branch)
 	return err
 }

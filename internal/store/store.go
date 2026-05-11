@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	turso "turso.tech/database/tursogo"
 )
 
@@ -37,6 +38,7 @@ func (s *Store) Close() error    { return s.db.Close() }
 
 // New opens the state DB, pings it, and runs pending migrations.
 func New(ctx context.Context, cfg *config.Config) (*Store, error) {
+	dlog.From(ctx).Info("opening state store", "target", scrub(strings.TrimSpace(cfg.State.URL)))
 	db, target, err := open(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -126,8 +128,8 @@ func isRemote(u string) bool {
 // localPath strips a file:// prefix and returns a filesystem path suitable
 // for the tursogo driver.
 func localPath(u string) string {
-	if strings.HasPrefix(u, "file://") {
-		return strings.TrimPrefix(u, "file://")
+	if p, ok := strings.CutPrefix(u, "file://"); ok {
+		return p
 	}
 	return u
 }

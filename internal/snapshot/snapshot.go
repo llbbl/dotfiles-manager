@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/audit"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
@@ -120,7 +121,9 @@ func (m *Manager) Snapshot(ctx context.Context, path string, file *tracker.File,
 	size := int64(len(data))
 
 	dest := m.blobPath(hash)
+	blobReused := true
 	if _, err := os.Stat(dest); errors.Is(err, os.ErrNotExist) {
+		blobReused = false
 		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 			return Snapshot{}, fmt.Errorf("mkdir blob dir: %w", err)
 		}
@@ -185,6 +188,10 @@ func (m *Manager) Snapshot(ctx context.Context, path string, file *tracker.File,
 		"reason": string(reason),
 		"size":   size,
 	})
+	dlog.From(ctx).Debug("snapshot taken",
+		"reason", string(reason),
+		"id", id,
+		"blob_reused", blobReused)
 	return snap, nil
 }
 
@@ -442,6 +449,7 @@ func (m *Manager) prune(ctx context.Context, dryRun bool) (int, int64, error) {
 			"removed":     removed,
 			"bytes_freed": freed,
 		})
+		dlog.From(ctx).Info("prune complete", "removed", removed, "bytes_freed", freed)
 	}
 	return removed, freed, nil
 }

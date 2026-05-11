@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
@@ -91,11 +92,15 @@ func (a *Adapter) Ask(ctx context.Context, prompt string) (AskResult, error) {
 		return AskResult{}, errors.New("claudecode: empty prompt")
 	}
 	start := time.Now()
+	argc := len(a.BuildArgs(prompt))
 	text, err := a.run(ctx, prompt)
+	dur := time.Since(start)
 	if err != nil {
+		dlog.From(ctx).Warn("claude failure", "argc", argc, "duration_ms", dur.Milliseconds())
 		return AskResult{}, err
 	}
-	return AskResult{Text: text, Duration: time.Since(start)}, nil
+	dlog.From(ctx).Debug("claude invocation", "argc", argc, "duration_ms", dur.Milliseconds())
+	return AskResult{Text: text, Duration: dur}, nil
 }
 
 // Suggest renders the structured prompt, runs claude, and splits the
@@ -103,19 +108,24 @@ func (a *Adapter) Ask(ctx context.Context, prompt string) (AskResult, error) {
 func (a *Adapter) Suggest(ctx context.Context, in SuggestInput) (SuggestResult, error) {
 	prompt := renderSuggestPrompt(in)
 	start := time.Now()
+	argc := len(a.BuildArgs(prompt))
 	text, err := a.run(ctx, prompt)
+	dur := time.Since(start)
 	if err != nil {
+		dlog.From(ctx).Warn("claude failure", "argc", argc, "duration_ms", dur.Milliseconds())
 		return SuggestResult{}, err
 	}
 	summary, diff, err := splitSuggestResponse(text)
 	if err != nil {
+		dlog.From(ctx).Warn("claude failure", "argc", argc, "duration_ms", dur.Milliseconds())
 		return SuggestResult{}, err
 	}
+	dlog.From(ctx).Debug("claude invocation", "argc", argc, "duration_ms", dur.Milliseconds())
 	return SuggestResult{
 		Prompt:   prompt,
 		Summary:  summary,
 		Diff:     diff,
-		Duration: time.Since(start),
+		Duration: dur,
 	}, nil
 }
 

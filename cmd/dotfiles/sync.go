@@ -14,6 +14,7 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/llbbl/dotfiles-manager/internal/vcs"
@@ -232,6 +233,9 @@ func newSyncCmd() *cobra.Command {
 			if err := auditLog(ctx, "sync", summary); err != nil {
 				return err
 			}
+
+			ahead, behind, _ := repo.AheadBehind(ctx)
+			dlog.From(ctx).Info("sync run", "files", len(changes), "ahead", ahead, "behind", behind)
 
 			if asJSON {
 				return jsonEncode(c.OutOrStdout(), summary)

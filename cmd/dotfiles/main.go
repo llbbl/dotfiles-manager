@@ -3,10 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +29,14 @@ type auditState struct {
 }
 
 var activeAudit auditState
+
+// dlogState holds the per-invocation debug logger backend closer.
+type dlogState struct {
+	logger *slog.Logger
+	closer io.Closer
+}
+
+var activeDlog dlogState
 
 func main() {
 	root := newRootCmd()
@@ -48,6 +59,15 @@ func newRootCmd() *cobra.Command {
 			"to suggest improvements as reviewable patches.",
 		SilenceUsage: true,
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			dl, dlcloser, dlerr := dlog.New()
+			if dlerr != nil {
+				fmt.Fprintf(os.Stderr, "dlog: %v\n", dlerr)
+				dl = dlog.Discard
+				dlcloser = io.NopCloser(nil)
+			}
+			activeDlog = dlogState{logger: dl, closer: dlcloser}
+			c.SetContext(dlog.Into(c.Context(), dl))
+
 			path := flagConfigPath
 			if path == "" {
 				p, err := config.DefaultPath()
@@ -60,6 +80,7 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dl.Debug("config loaded", "path", path, "backend", cfg.Log.Backend)
 			c.SetContext(config.WithContext(c.Context(), cfg))
 
 			// Best-effort: build an audit Logger backed by libSQL. If the
@@ -87,6 +108,10 @@ func newRootCmd() *cobra.Command {
 			}
 			audit.SetDefault(nil)
 			activeAudit = auditState{}
+			if activeDlog.closer != nil {
+				_ = activeDlog.closer.Close()
+			}
+			activeDlog = dlogState{}
 			return nil
 		},
 	}
@@ -130,12 +155,3 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-func stubCmd(name, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   name,
-		Short: short,
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("%s: not yet implemented\n", name)
-		},
-	}
-}

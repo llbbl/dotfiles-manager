@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 )
@@ -298,6 +299,8 @@ func Track(ctx context.Context, s *store.Store, canonical, display string, opts 
 	now := time.Now().UTC()
 	addedAt := now.Format(time.RFC3339)
 
+	dlog.From(ctx).Debug("tracking file", "display", display, "hash", shortHash(hash))
+
 	existing, err := findByPath(ctx, s, canonical)
 	if err != nil {
 		return File{}, err
@@ -385,6 +388,7 @@ func List(ctx context.Context, s *store.Store) ([]File, error) {
 
 // ComputeStatus reports the status for every tracked file.
 func ComputeStatus(ctx context.Context, s *store.Store) ([]StatusReport, error) {
+	start := time.Now()
 	files, err := List(ctx, s)
 	if err != nil {
 		return nil, err
@@ -393,7 +397,17 @@ func ComputeStatus(ctx context.Context, s *store.Store) ([]StatusReport, error) 
 	for _, f := range files {
 		out = append(out, statusFor(f))
 	}
+	dlog.From(ctx).Debug("status pass",
+		"count", len(files),
+		"duration_ms", time.Since(start).Milliseconds())
 	return out, nil
+}
+
+func shortHash(h string) string {
+	if len(h) > 8 {
+		return h[:8]
+	}
+	return h
 }
 
 // ComputeStatusOne returns the status for a single tracked file, matched
