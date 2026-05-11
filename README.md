@@ -17,7 +17,7 @@ just build-versioned   # build ./bin/dotfiles with version info baked in
 
 Run `just --list` to see all available recipes (build, test, lint, migrations, version bumps, etc.).
 
-Requirements are pinned in `mise.toml` (Go 1.25.7, just, goose). Activate them with `mise install`.
+Requirements are pinned in `mise.toml` (Go 1.25.7, just). Activate them with `mise install`.
 
 ## License
 
