@@ -42,7 +42,15 @@ type ClaudeCodeConfig struct {
 }
 
 type LogConfig struct {
-	Path string `toml:"path"`
+	Path    string `toml:"path"`
+	Backend string `toml:"backend"`
+}
+
+var knownLogBackends = map[string]bool{
+	"both":  true,
+	"jsonl": true,
+	"db":    true,
+	"none":  true,
 }
 
 type StateConfig struct {
@@ -124,7 +132,8 @@ func Defaults() *Config {
 			},
 		},
 		Log: LogConfig{
-			Path: filepath.Join(data, "dotfiles", "logs", "actions.jsonl"),
+			Path:    filepath.Join(data, "dotfiles", "logs", "actions.jsonl"),
+			Backend: "both",
 		},
 		State: StateConfig{
 			URL: "file://" + filepath.Join(data, "dotfiles", "state.db"),
@@ -160,6 +169,12 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("TURSO_AUTH_TOKEN"); v != "" {
 		cfg.State.AuthToken = v
 	}
+	if v := os.Getenv("DOTFILES_LOG_BACKEND"); v != "" {
+		cfg.Log.Backend = strings.ToLower(v)
+	}
+	if cfg.Log.Backend == "" {
+		cfg.Log.Backend = "both"
+	}
 
 	return cfg, nil
 }
@@ -183,6 +198,9 @@ func Save(path string, cfg *Config) error {
 func (c *Config) Validate() error {
 	if !knownProviders[c.AI.Provider] {
 		return fmt.Errorf("unknown ai.provider %q", c.AI.Provider)
+	}
+	if !knownLogBackends[c.Log.Backend] {
+		return fmt.Errorf("unknown log.backend: %q (allowed: both|jsonl|db|none)", c.Log.Backend)
 	}
 	return nil
 }

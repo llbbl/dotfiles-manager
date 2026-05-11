@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -14,6 +16,14 @@ var (
 	flagConfigPath string
 	flagVerbose    bool
 )
+
+// auditState holds the per-invocation audit logger + store so PersistentPostRunE can close them.
+type auditState struct {
+	logger *audit.Logger
+	store  *store.Store
+}
+
+var activeAudit auditState
 
 func main() {
 	root := newRootCmd()
@@ -45,6 +55,32 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 			c.SetContext(config.WithContext(c.Context(), cfg))
+
+			// Best-effort: build an audit Logger backed by libSQL. If the
+			// store can't open (e.g. `dotfiles config` before init), keep
+			// the default unset and let callers no-op.
+			s, serr := store.New(c.Context(), cfg)
+			if serr != nil {
+				return nil
+			}
+			l, lerr := audit.New(c.Context(), cfg, s)
+			if lerr != nil {
+				_ = s.Close()
+				return nil
+			}
+			activeAudit = auditState{logger: l, store: s}
+			audit.SetDefault(l)
+			return nil
+		},
+		PersistentPostRunE: func(c *cobra.Command, _ []string) error {
+			if activeAudit.logger != nil {
+				_ = activeAudit.logger.Close()
+			}
+			if activeAudit.store != nil {
+				_ = activeAudit.store.Close()
+			}
+			audit.SetDefault(nil)
+			activeAudit = auditState{}
 			return nil
 		},
 	}
@@ -57,7 +93,7 @@ func newRootCmd() *cobra.Command {
 		newConfigCmd(),
 		newMigrateCmd(),
 		newScanCmd(),
-		stubCmd("init", "First-run setup: create config, init/clone private repo, set up log"),
+		newInitCmd(),
 		newTrackCmd(),
 		newUntrackCmd(),
 		newListCmd(),
@@ -66,8 +102,8 @@ func newRootCmd() *cobra.Command {
 		newBackupsCmd(),
 		newRestoreCmd(),
 		newPruneCmd(),
-		stubCmd("sync", "Commit and push all changes to the private repo"),
-		stubCmd("log", "Show change history"),
+		newSyncCmd(),
+		newLogCmd(),
 		stubCmd("ask", "Ask a free-form question about your dotfiles"),
 		stubCmd("suggest", "Have the AI propose improvements as a diff"),
 		stubCmd("apply", "Apply a previously generated suggestion"),

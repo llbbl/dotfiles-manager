@@ -27,6 +27,14 @@ extra_args = []
 # JSONL action log written by `dotfiles sync` and other writes.
 path = "~/.local/share/dotfiles/logs/actions.jsonl"
 
+# Where audit events are stored. One of:
+#   both  — JSONL file + libSQL actions table (default)
+#   jsonl — JSONL file only
+#   db    — libSQL actions table only
+#   none  — disabled
+# Override at runtime via DOTFILES_LOG_BACKEND.
+backend = "both"
+
 [backup]
 # Pre-modification snapshot store. Blobs are content-addressed (sha256)
 # and deduplicated. See `dotfiles backups`, `dotfiles restore`, and

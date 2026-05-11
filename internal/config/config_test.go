@@ -24,6 +24,9 @@ func TestLoad_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.Repo.Local == "" || strings.Contains(cfg.Repo.Local, "~") {
 		t.Errorf("repo.local not expanded: %q", cfg.Repo.Local)
 	}
+	if cfg.Log.Backend != "both" {
+		t.Errorf("log.backend default = %q, want both", cfg.Log.Backend)
+	}
 }
 
 func TestSaveLoad_Roundtrip(t *testing.T) {
@@ -34,6 +37,7 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 	orig.Repo.Remote = "git@github.com:llbbl/dotfiles-private.git"
 	orig.AI.ClaudeCode.Model = "sonnet"
 	orig.AI.ClaudeCode.ExtraArgs = []string{"--foo", "--bar"}
+	orig.Log.Backend = "jsonl"
 
 	if err := Save(path, orig); err != nil {
 		t.Fatalf("save: %v", err)
@@ -51,6 +55,41 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 	}
 	if len(loaded.AI.ClaudeCode.ExtraArgs) != 2 {
 		t.Errorf("extra_args mismatch: %#v", loaded.AI.ClaudeCode.ExtraArgs)
+	}
+	if loaded.Log.Backend != "jsonl" {
+		t.Errorf("log.backend mismatch: %q", loaded.Log.Backend)
+	}
+}
+
+func TestLogBackendEnvOverride(t *testing.T) {
+	t.Setenv("DOTFILES_LOG_BACKEND", "DB")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Log.Backend != "db" {
+		t.Errorf("expected env override to lowercase 'db', got %q", cfg.Log.Backend)
+	}
+
+	t.Setenv("DOTFILES_LOG_BACKEND", "")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Log.Backend != "both" {
+		t.Errorf("expected empty env to fall back to default 'both', got %q", cfg.Log.Backend)
+	}
+}
+
+func TestValidate_RejectsUnknownLogBackend(t *testing.T) {
+	cfg := Defaults()
+	cfg.Log.Backend = "xyz"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for unknown log.backend")
+	}
+	if !strings.Contains(err.Error(), "unknown log.backend") {
+		t.Errorf("error missing expected substring: %v", err)
 	}
 }
 
