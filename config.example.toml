@@ -1,0 +1,33 @@
+# dotfiles-manager — example config
+#
+# Real config lives at ~/.config/dotfiles/config.toml (or the path passed
+# via --config). Run `dotfiles config show` to see the effective config
+# after defaults + env overrides are applied.
+
+[repo]
+# Private GitHub repo that stores tracked file copies and audit logs.
+remote = "git@github.com:llbbl/dotfiles-private.git"
+# Local clone of the private backup repo.
+local  = "~/.local/share/dotfiles/repo"
+
+[ai]
+# Provider used for `dotfiles ask` and `dotfiles suggest`. Currently only
+# "claude-code" is implemented; the interface is pluggable.
+provider = "claude-code"
+
+[ai.claude-code]
+# Path to the Claude Code CLI binary on $PATH.
+bin        = "claude"
+# Optional model override; empty string = CC default.
+model      = ""
+# Extra args appended to every `claude -p ...` invocation.
+extra_args = []
+
+[log]
+# JSONL action log written by `dotfiles sync` and other writes.
+path = "~/.local/share/dotfiles/logs/actions.jsonl"
+
+# State (libSQL/Turso) is configured exclusively via environment variables:
+#   TURSO_DATABASE_URL   libsql://<db>-<org>.turso.io   (or unset for embedded file)
+#   TURSO_AUTH_TOKEN     long-lived token from `turso db tokens create <db>`
+# See .env.example.
