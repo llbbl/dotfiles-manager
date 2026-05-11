@@ -1,3 +1,7 @@
+// Package store opens the libSQL/Turso state database (local file or
+// remote-with-replica), runs the embedded goose migrations on New, and
+// exposes a thin handle for the rest of the app. Remote URLs require a
+// TURSO_AUTH_TOKEN; only a small allowlist of URL parts is ever logged.
 package store
 
 import (
@@ -14,13 +18,21 @@ import (
 	turso "turso.tech/database/tursogo"
 )
 
+// Store is a handle around an open *sql.DB plus the connection target
+// (a filesystem path or remote URL) used to open it.
 type Store struct {
 	db     *sql.DB
 	target string
 }
 
+// DB returns the underlying *sql.DB.
 func (s *Store) DB() *sql.DB     { return s.db }
+
+// Target returns the connection string the Store was opened against (a
+// local path or a remote URL).
 func (s *Store) Target() string  { return s.target }
+
+// Close closes the underlying *sql.DB.
 func (s *Store) Close() error    { return s.db.Close() }
 
 // New opens the state DB, pings it, and runs pending migrations.

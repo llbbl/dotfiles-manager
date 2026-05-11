@@ -28,7 +28,7 @@ const (
 	StatusStale    = "stale"
 )
 
-// Errors.
+// Sentinel errors returned by the apply workflow and the diff parser.
 var (
 	ErrNotFound         = errors.New("suggestion not found")
 	ErrAlreadyDecided   = errors.New("suggestion already decided")
@@ -66,10 +66,12 @@ type PostSnapshotError struct {
 	Err        error
 }
 
+// Error implements the error interface and includes the recovery hint.
 func (e *PostSnapshotError) Error() string {
 	return fmt.Sprintf("%v (recover with: dotfiles restore %s)", e.Err, e.SnapshotID)
 }
 
+// Unwrap returns the underlying error.
 func (e *PostSnapshotError) Unwrap() error { return e.Err }
 
 // Repo provides CRUD against the suggestions table plus the Apply +

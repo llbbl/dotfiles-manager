@@ -1,6 +1,8 @@
-// Package snapshot provides the pre-modification backup/snapshot system.
-// It stores file blobs on disk (deduplicated by content hash) with metadata
-// in the snapshots table, and supports listing, restore, and prune.
+// Package snapshot provides the pre-modification backup system. Blobs
+// are written under cfg.Dir, deduplicated by SHA-256 content hash, with
+// row-per-snapshot metadata recorded in the snapshots table. The
+// Manager exposes Snapshot/List/Get/Restore/Open and a retention+size
+// driven Prune.
 package snapshot
 
 import (
@@ -28,6 +30,7 @@ import (
 // Reason identifies WHY a snapshot was taken.
 type Reason string
 
+// Recognized Reason values written into the snapshots table.
 const (
 	ReasonTrack    Reason = "track"
 	ReasonManual   Reason = "manual"
@@ -65,6 +68,7 @@ type RestoreOptions struct {
 	Overwrite bool
 }
 
+// Sentinel errors returned by the Manager.
 var (
 	ErrSnapshotNotFound = errors.New("snapshot not found")
 	ErrDestExists       = errors.New("destination exists")

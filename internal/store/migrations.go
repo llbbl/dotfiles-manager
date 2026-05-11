@@ -22,6 +22,8 @@ func configureGoose() error {
 	return nil
 }
 
+// RunMigrations applies any pending goose "up" migrations using the
+// embedded migrations directory. Safe to call repeatedly.
 func RunMigrations(ctx context.Context, db *sql.DB) error {
 	if err := configureGoose(); err != nil {
 		return err
@@ -32,6 +34,9 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// RunGoose drives goose directly with an arbitrary command (e.g. "up",
+// "down", "status") against the embedded migrations directory. Used by
+// the `migrate` subcommand.
 func RunGoose(ctx context.Context, db *sql.DB, command string, args ...string) error {
 	if err := configureGoose(); err != nil {
 		return err

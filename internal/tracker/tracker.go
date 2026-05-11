@@ -19,6 +19,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/store"
 )
 
+// File is one row of the tracked_files table.
 type File struct {
 	ID          int64
 	Path        string
@@ -28,8 +29,11 @@ type File struct {
 	LastSynced  time.Time
 }
 
+// Status is the comparison result between a tracked file's recorded
+// hash and its current on-disk contents.
 type Status string
 
+// Status values reported by ComputeStatus.
 const (
 	StatusClean    Status = "clean"
 	StatusModified Status = "modified"
@@ -37,22 +41,27 @@ const (
 	StatusNew      Status = "new"
 )
 
+// StatusReport pairs a tracked File with its current Status and (when
+// applicable) the freshly-computed content hash.
 type StatusReport struct {
 	File   File
 	Status Status
 	Hash   string
 }
 
+// TrackOptions tunes Track's behavior.
 type TrackOptions struct {
 	SkipSecretCheck bool
 	Reset           bool
 	// AfterCommit is invoked after the tracked_files row is inserted or
 	// updated, with the resulting File. Errors are surfaced via the
 	// returned (File, error) pair to the caller; if non-nil, the row is
-	// still committed. Used by M3.5 to take a ReasonTrack snapshot.
+	// still committed. Used by the snapshot subsystem to take a
+	// ReasonTrack snapshot.
 	AfterCommit func(ctx context.Context, f File) error
 }
 
+// Sentinel errors returned by Track/Untrack/Resolve.
 var (
 	ErrAlreadyTracked     = errors.New("path is already tracked")
 	ErrNotTracked         = errors.New("path is not tracked")
@@ -60,24 +69,27 @@ var (
 	ErrPathOutsideAllowed = errors.New("path is outside the allowed roots")
 )
 
-// ErrSecretsDetected wraps a secrets scan result so the CLI can render
-// the findings table.
+// SecretsError wraps a secrets scan result so the CLI can render the
+// findings table. Returned by Track when the pre-flight scan flags the
+// file.
 type SecretsError struct {
 	Result secrets.Result
 	Path   string
 }
 
+// Error implements the error interface.
 func (e *SecretsError) Error() string {
 	return fmt.Sprintf("secrets detected in %s (%d findings)", e.Path, len(e.Result.Findings))
 }
 
-// ErrBinaryLikeSuffix is returned when a path matches a binary-ish suffix
+// BinarySuffixError is returned when a path matches a binary-ish suffix
 // and TrackOptions.SkipSecretCheck (the --force flag) is not set.
 type BinarySuffixError struct {
 	Path   string
 	Suffix string
 }
 
+// Error implements the error interface.
 func (e *BinarySuffixError) Error() string {
 	return fmt.Sprintf("refusing %s: suspicious suffix %q (use --force to override)", e.Path, e.Suffix)
 }
