@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/spf13/cobra"
 )
+
 
 var version = "0.0.1-dev"
 
@@ -29,6 +31,10 @@ func main() {
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -104,8 +110,8 @@ func newRootCmd() *cobra.Command {
 		newPruneCmd(),
 		newSyncCmd(),
 		newLogCmd(),
-		stubCmd("ask", "Ask a free-form question about your dotfiles"),
-		stubCmd("suggest", "Have the AI propose improvements as a diff"),
+		newAskCmd(),
+		newSuggestCmd(),
 		stubCmd("apply", "Apply a previously generated suggestion"),
 	)
 
