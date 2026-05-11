@@ -92,14 +92,29 @@ url = "file:///~/foo/state.db"
 	}
 }
 
-func TestTursoAuthTokenEnvOverride(t *testing.T) {
+func TestTursoEnvOverrides(t *testing.T) {
 	t.Setenv("TURSO_AUTH_TOKEN", "secret-token-xyz")
+	t.Setenv("TURSO_DATABASE_URL", "libsql://example-org.turso.io")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.State.AuthToken != "secret-token-xyz" {
-		t.Errorf("expected env override, got %q", cfg.State.AuthToken)
+		t.Errorf("expected token env override, got %q", cfg.State.AuthToken)
+	}
+	if cfg.State.URL != "libsql://example-org.turso.io" {
+		t.Errorf("expected url env override, got %q", cfg.State.URL)
+	}
+}
+
+func TestTursoDatabaseURLEnvOverride(t *testing.T) {
+	t.Setenv("TURSO_DATABASE_URL", "libsql://only-url.turso.io")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.State.URL != "libsql://only-url.turso.io" {
+		t.Errorf("expected env override, got %q", cfg.State.URL)
 	}
 }
 

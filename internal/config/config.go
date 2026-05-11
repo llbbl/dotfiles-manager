@@ -141,6 +141,9 @@ func Load(path string) (*Config, error) {
 	cfg.Log.Path = expandHome(cfg.Log.Path)
 	cfg.State.URL = expandHome(cfg.State.URL)
 
+	if v := os.Getenv("TURSO_DATABASE_URL"); v != "" {
+		cfg.State.URL = v
+	}
 	if v := os.Getenv("TURSO_AUTH_TOKEN"); v != "" {
 		cfg.State.AuthToken = v
 	}
