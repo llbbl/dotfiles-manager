@@ -13,6 +13,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/ai"
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/diffrender"
 	"github.com/llbbl/dotfiles-manager/internal/ids"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/store"
@@ -126,11 +127,7 @@ func newSuggestCmd() *cobra.Command {
 			out := c.OutOrStdout()
 			fmt.Fprintln(out, res.Summary)
 			fmt.Fprintln(out)
-			if isTerminal(out) {
-				writeColoredDiff(out, res.Diff)
-			} else {
-				fmt.Fprintln(out, res.Diff)
-			}
+			diffrender.WriteColored(out, res.Diff)
 			fmt.Fprintln(out)
 			fmt.Fprintf(out, "%s\n# review and apply with: dotfiles apply %s\n", id, id)
 			return nil
@@ -197,35 +194,3 @@ func renderPromptForRecord(f tracker.File, goal string) string {
 	return b.String()
 }
 
-func isTerminal(w io.Writer) bool {
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (info.Mode() & os.ModeCharDevice) != 0
-}
-
-func writeColoredDiff(w io.Writer, diff string) {
-	const (
-		green = "\x1b[32m"
-		red   = "\x1b[31m"
-		cyan  = "\x1b[36m"
-		reset = "\x1b[0m"
-	)
-	for line := range strings.SplitSeq(diff, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "diff "):
-			fmt.Fprintln(w, cyan+line+reset)
-		case strings.HasPrefix(line, "+"):
-			fmt.Fprintln(w, green+line+reset)
-		case strings.HasPrefix(line, "-"):
-			fmt.Fprintln(w, red+line+reset)
-		default:
-			fmt.Fprintln(w, line)
-		}
-	}
-}

@@ -112,7 +112,9 @@ func newRootCmd() *cobra.Command {
 		newLogCmd(),
 		newAskCmd(),
 		newSuggestCmd(),
-		stubCmd("apply", "Apply a previously generated suggestion"),
+		newSuggestionsCmd(),
+		newApplyCmd(),
+		newRejectCmd(),
 	)
 
 	return cmd

@@ -28,6 +28,7 @@ func newLogCmd() *cobra.Command {
 		limit        int
 		asJSON       bool
 		withCommits  bool
+		suggestionID string
 	)
 	cmd := &cobra.Command{
 		Use:   "log [<file>]",
@@ -62,13 +63,23 @@ func newLogCmd() *cobra.Command {
 				argsQ = append(argsQ, sinceTS)
 			}
 			if len(args) == 1 {
-				conds = append(conds, "json_extract(payload_json, '$.path') = ? OR json_extract(payload_json, '$.display_path') = ?")
+				conds = append(conds, "(json_extract(payload_json, '$.path') = ? OR json_extract(payload_json, '$.display_path') = ?)")
 				argsQ = append(argsQ, args[0], args[0])
+			}
+			if suggestionID != "" {
+				conds = append(conds, "json_extract(payload_json, '$.suggestion_id') = ?")
+				argsQ = append(argsQ, suggestionID)
 			}
 			if len(conds) > 0 {
 				query += " WHERE " + strings.Join(conds, " AND ")
 			}
-			query += " ORDER BY ts DESC"
+			// Suggestion lifecycle reads oldest-first; everything else
+			// stays newest-first.
+			if suggestionID != "" {
+				query += " ORDER BY ts ASC"
+			} else {
+				query += " ORDER BY ts DESC"
+			}
 			if limit > 0 {
 				query += fmt.Sprintf(" LIMIT %d", limit)
 			}
@@ -152,6 +163,7 @@ func newLogCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 100, "max entries")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit as JSON")
 	cmd.Flags().BoolVar(&withCommits, "with-commits", false, "interleave backup-repo commits")
+	cmd.Flags().StringVar(&suggestionID, "suggestion", "", "filter by suggestion id (lifecycle order)")
 	return cmd
 }
 
