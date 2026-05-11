@@ -56,6 +56,7 @@ func newRootCmd() *cobra.Command {
 		newVersionCmd(),
 		newConfigCmd(),
 		newMigrateCmd(),
+		newScanCmd(),
 		stubCmd("init", "First-run setup: create config, init/clone private repo, set up log"),
 		stubCmd("track", "Begin managing a file"),
 		stubCmd("untrack", "Stop managing a file"),
