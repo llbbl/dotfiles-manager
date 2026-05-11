@@ -30,7 +30,12 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Beads / Dolt files (added by bd init)
+# Beads / Dolt / SQLite / libSQL state files
 .dolt/
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
 .beads-credential-key
