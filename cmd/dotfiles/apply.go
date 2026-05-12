@@ -16,6 +16,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newApplyCmd builds the `dotfiles apply` command, which applies a
+// previously generated AI suggestion to its target file after a
+// confirmation prompt. The --yes flag skips the prompt and --json emits
+// a structured result.
 func newApplyCmd() *cobra.Command {
 	var (
 		yes    bool

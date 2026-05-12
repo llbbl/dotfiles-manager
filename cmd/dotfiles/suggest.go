@@ -34,6 +34,11 @@ func exitf(code int, format string, args ...any) error {
 	return &exitError{code: code, msg: fmt.Sprintf(format, args...)}
 }
 
+// newSuggestCmd builds the `dotfiles suggest` command, which asks the
+// configured AI provider to propose improvements to a tracked file as a
+// unified diff, stores the result as a pending suggestion, and prints
+// the rendered diff. --goal supplies an optional intent string and
+// --json emits the suggestion record as JSON.
 func newSuggestCmd() *cobra.Command {
 	var (
 		goal   string

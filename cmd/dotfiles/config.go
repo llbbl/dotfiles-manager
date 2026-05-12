@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newConfigCmd builds the `dotfiles config` command group, with `show`
+// (print the effective config as TOML) and `path` (print the resolved
+// config file path) subcommands.
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",

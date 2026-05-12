@@ -9,6 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newRejectCmd builds the `dotfiles reject` command, which marks a
+// pending AI suggestion as rejected without touching the target file
+// and records the decision in the audit log. --json emits the result as
+// JSON.
 func newRejectCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{

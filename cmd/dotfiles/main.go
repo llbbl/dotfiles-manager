@@ -1,3 +1,7 @@
+// Package main is the entry point for the `dotfiles` CLI, which tracks,
+// versions, and AI-improves a user's dotfiles. It manages a local libSQL
+// state database and mirrors change history to a private backup git
+// repository so configuration changes are reviewable and recoverable.
 package main
 
 import (
@@ -50,6 +54,10 @@ func main() {
 	}
 }
 
+// newRootCmd builds the top-level `dotfiles` cobra command. It wires the
+// persistent --config/--verbose flags, loads config + dlog + audit logger
+// in PersistentPreRunE, closes them in PersistentPostRunE, and registers
+// every subcommand.
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dotfiles",
@@ -147,6 +155,8 @@ func newRootCmd() *cobra.Command {
 	return cmd
 }
 
+// newVersionCmd builds the `dotfiles version` command, which prints the
+// compiled-in version string and exits.
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

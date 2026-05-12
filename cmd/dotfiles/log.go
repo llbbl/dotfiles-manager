@@ -22,6 +22,11 @@ type logEntry struct {
 	Payload map[string]any
 }
 
+// newLogCmd builds the `dotfiles log` command, which renders the change
+// history for all tracked files or a single path. It merges audit-log
+// rows from the state DB with optional backup-repo git commits
+// (--with-commits), supports --since date filtering, --limit, --json
+// output, and --suggestion-id scoping.
 func newLogCmd() *cobra.Command {
 	var (
 		sinceFlag    string

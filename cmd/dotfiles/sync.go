@@ -40,6 +40,12 @@ type fileChange struct {
 	New         bool   `json:"new"`
 }
 
+// newSyncCmd builds the `dotfiles sync` command, which copies every
+// tracked file's current contents into the private backup repo and
+// commits + pushes the result. --dry-run reports the planned changes
+// without writing, --message overrides the commit message, --strategy
+// (auto|keep-local|keep-remote|abort) controls drift resolution, and
+// --json emits the sync summary as JSON.
 func newSyncCmd() *cobra.Command {
 	var (
 		dryRun     bool

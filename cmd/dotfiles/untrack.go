@@ -9,6 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newUntrackCmd builds the `dotfiles untrack` command, which removes a
+// file from active management. The file itself stays on disk and its
+// snapshots remain in the store for later restore.
 func newUntrackCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "untrack <path>",

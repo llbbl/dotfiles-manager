@@ -10,6 +10,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newListCmd builds the `dotfiles list` command, which prints every
+// tracked file with its added-at date and short content hash. --json
+// emits the listing as JSON.
 func newListCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{

@@ -12,6 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newStatusCmd builds the `dotfiles status` command, which compares
+// each tracked file's on-disk hash against its recorded hash and prints
+// the clean/modified/missing status. An optional path argument scopes
+// the check to one file; --json emits the report as JSON; the process
+// exits non-zero if any file is not clean.
 func newStatusCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{

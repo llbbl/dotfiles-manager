@@ -25,6 +25,10 @@ const (
 	exitAIGeneric = 5
 )
 
+// newAskCmd builds the `dotfiles ask` command, which sends a free-form
+// question to the configured AI provider and prints the response. The
+// --json flag emits the answer plus provider/duration metadata as JSON;
+// every invocation is recorded to the audit log with a hashed prompt.
 func newAskCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{

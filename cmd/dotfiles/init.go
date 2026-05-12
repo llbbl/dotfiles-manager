@@ -22,6 +22,12 @@ const (
 	exitInitNoTTY = 4
 )
 
+// newInitCmd builds the `dotfiles init` command, which performs
+// first-run setup of the private backup repo: cloning an existing
+// remote, or initializing a new repo and optionally creating the
+// matching private GitHub remote with `gh`. --remote sets the URL,
+// --create-remote provisions it via the GitHub API, and --yes skips
+// interactive confirmations.
 func newInitCmd() *cobra.Command {
 	var (
 		remoteFlag   string
