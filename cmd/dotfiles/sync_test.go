@@ -68,7 +68,7 @@ func TestSync_FirstRunCommitsAndPushes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit.New: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 	audit.SetDefault(logger)
 	defer audit.SetDefault(nil)
 

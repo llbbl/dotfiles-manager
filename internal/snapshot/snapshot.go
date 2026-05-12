@@ -224,7 +224,7 @@ func (m *Manager) List(ctx context.Context, path string) ([]Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query snapshots: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Snapshot
 	for rows.Next() {
 		s, err := scanSnapshot(rows)

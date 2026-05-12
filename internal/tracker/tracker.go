@@ -371,7 +371,7 @@ func List(ctx context.Context, s *store.Store) ([]File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query tracked_files: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []File
 	for rows.Next() {
 		f, err := scanFile(rows)

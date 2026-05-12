@@ -17,7 +17,7 @@ func TestNew_LevelOff_ReturnsDiscard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if l != Discard {
 		t.Fatalf("expected Discard logger when level=off")
 	}
@@ -32,7 +32,7 @@ func TestNew_LevelUnset_DefaultsOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if l != Discard {
 		t.Fatalf("expected Discard logger when level unset")
 	}
@@ -119,7 +119,7 @@ func TestNew_UnknownLevel_FallsBackToOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = w.Close()
 
 	br := bufio.NewReader(r)

@@ -115,7 +115,7 @@ func (r *Repo) List(ctx context.Context, fileID int64, status string) ([]Suggest
 	if err != nil {
 		return nil, fmt.Errorf("query suggestions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Suggestion
 	for rows.Next() {
 		sg, err := scanSuggestion(rows)

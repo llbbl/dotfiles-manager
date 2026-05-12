@@ -1,0 +1,31 @@
+version: "2"
+
+# We keep this config narrow on purpose. The intent is to catch real bugs
+# (forgotten error returns on writes, transactions, network calls), not to
+# nag about idiomatic Go patterns. Each exclusion below is deliberate.
+linters:
+  default: standard
+  settings:
+    errcheck:
+      # Close calls on read-only handles. These are idempotent and ignoring
+      # the Close error is the established Go idiom for read paths.
+      # Write paths in this repo handle Close explicitly (Sync + Close with
+      # error checked) -- see internal/apply/apply.go, internal/config's
+      # Save, and cmd/dotfiles/append.go's atomicWrite -- so this exclusion
+      # does not hide write errors.
+      exclude-functions:
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*github.com/llbbl/dotfiles-manager/internal/store.Store).Close
+
+        # CLI output to user-facing writers. If the terminal/pipe is gone
+        # there's nothing actionable to do, and the surrounding code never
+        # acts on the return value. Same justification as the stdlib's own
+        # use of fmt.Fprintln(os.Stderr, ...).
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
+
+        # tabwriter writes to one of the above writers; flush errors carry
+        # no additional signal.
+        - (*text/tabwriter.Writer).Flush

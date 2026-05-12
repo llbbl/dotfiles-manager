@@ -88,7 +88,7 @@ func newLogCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 
 			var entries []logEntry
 			for rows.Next() {

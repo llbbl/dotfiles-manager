@@ -92,7 +92,7 @@ func TestResolve_TildeExpansion(t *testing.T) {
 	if err != nil {
 		t.Skipf("can't create temp under home: %v", err)
 	}
-	defer os.Remove(f.Name())
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 	f.Close()
 
 	base := filepath.Base(f.Name())

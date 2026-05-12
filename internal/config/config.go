@@ -220,10 +220,17 @@ func Save(path string, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	defer f.Close()
 	enc := toml.NewEncoder(f)
 	if err := enc.Encode(cfg); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("encode: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
 	}
 	return nil
 }

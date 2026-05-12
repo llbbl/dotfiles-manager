@@ -48,7 +48,7 @@ func TestNew_EmbeddedFile_RunsMigrationsAndIsAlive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows err: %v", err)
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	for tbl, ok := range want {
 		if !ok {
