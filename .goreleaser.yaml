@@ -1,0 +1,74 @@
+version: 2
+
+project_name: dfm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dfm
+    main: ./cmd/dfm
+    binary: dfm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: dfm
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE.md
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: llbbl
+    name: dotfiles-manager
+  draft: false
+  prerelease: auto
+  header: |
+    ## dfm {{ .Tag }}
+
+    Pre-alpha — APIs and CLI flags may change without notice.
+  footer: |
+    **Install**
+
+    ```
+    # Download for your platform from the assets below, then:
+    tar -xzf dfm_*_*.tar.gz
+    sudo install -m 0755 dfm /usr/local/bin/dfm
+    ```
+
+    **Note:** `dfm` uses the `turso.tech/database/tursogo` SDK, which downloads a small
+    native library to `~/.cache/turso-go/` on first run.

@@ -19,7 +19,12 @@ import (
 )
 
 
-var version = "0.0.1-dev"
+// Populated at build time via -ldflags (see .goreleaser.yaml).
+var (
+	version = "0.0.1-dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 var (
 	flagConfigPath string
@@ -163,7 +168,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print version",
 		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("dfm %s\n", version)
+			fmt.Printf("dfm %s (commit %s, built %s)\n", version, commit, date)
 		},
 	}
 }
