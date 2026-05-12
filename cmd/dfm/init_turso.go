@@ -240,7 +240,7 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
 	if mErr != nil {
 		fmt.Fprintf(os.Stderr, `
 ✗ Turso remote configured but migrations failed: %v
-  Run: dotfiles migrate up
+  Run: dfm migrate up
 `, mErr)
 		audit.Log(ctx, "init.turso", map[string]any{
 			"db_name":  dbName,
@@ -259,7 +259,7 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
   Migrations: applied
 
 Next step: ensure your shell loads %s, or export TURSO_AUTH_TOKEN
-in your environment. dotfiles reads $TURSO_AUTH_TOKEN at runtime.
+in your environment. dfm reads $TURSO_AUTH_TOKEN at runtime.
 `, dbName, cfgPath, envPath, envPath)
 
 	// 11. Audit event — host only, never the full URL or token.

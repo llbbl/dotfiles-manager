@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newBackupCmd builds the `dotfiles backup` command, which takes a
+// newBackupCmd builds the `dfm backup` command, which takes a
 // manual content snapshot of the given path and records it in the
 // snapshot store. --reason tags the snapshot (manual|pre-apply|pre-sync)
 // and --json emits the resulting snapshot record as JSON.
@@ -74,7 +74,7 @@ func newBackupCmd() *cobra.Command {
 	return cmd
 }
 
-// newBackupsCmd builds the `dotfiles backups` command, which lists
+// newBackupsCmd builds the `dfm backups` command, which lists
 // snapshots from the snapshot store. An optional path argument scopes
 // the listing to one file; --json emits the list as JSON.
 func newBackupsCmd() *cobra.Command {
@@ -136,7 +136,7 @@ func newBackupsCmd() *cobra.Command {
 	return cmd
 }
 
-// newRestoreCmd builds the `dotfiles restore` command, which writes a
+// newRestoreCmd builds the `dfm restore` command, which writes a
 // snapshot's content back to disk. --to overrides the destination,
 // --overwrite allows clobbering an existing file, and --json emits the
 // restore result as JSON.
@@ -191,7 +191,7 @@ func newRestoreCmd() *cobra.Command {
 	return cmd
 }
 
-// newPruneCmd builds the `dotfiles prune` command, which evicts old
+// newPruneCmd builds the `dfm prune` command, which evicts old
 // snapshots according to the configured retention policy and size cap.
 // --dry-run reports what would be removed without changing anything;
 // --json emits the result as JSON.

@@ -8,8 +8,7 @@ AGENTS.md
 _/
 
 # Go build artifacts
-/dotfiles
-/dotfiles-manager
+/dfm
 /bin/
 /dist/
 *.exe

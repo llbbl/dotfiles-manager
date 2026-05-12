@@ -34,7 +34,7 @@ func exitf(code int, format string, args ...any) error {
 	return &exitError{code: code, msg: fmt.Sprintf(format, args...)}
 }
 
-// newSuggestCmd builds the `dotfiles suggest` command, which asks the
+// newSuggestCmd builds the `dfm suggest` command, which asks the
 // configured AI provider to propose improvements to a tracked file as a
 // unified diff, stores the result as a pending suggestion, and prints
 // the rendered diff. --goal supplies an optional intent string and
@@ -134,7 +134,7 @@ func newSuggestCmd() *cobra.Command {
 			fmt.Fprintln(out)
 			diffrender.WriteColored(out, res.Diff)
 			fmt.Fprintln(out)
-			fmt.Fprintf(out, "%s\n# review and apply with: dotfiles apply %s\n", id, id)
+			fmt.Fprintf(out, "%s\n# review and apply with: dfm apply %s\n", id, id)
 			return nil
 		},
 	}
@@ -156,7 +156,7 @@ func lookupTrackedFile(ctx context.Context, s *store.Store, canonical, display s
 		}
 	}
 	return tracker.File{}, exitf(exitNotFound,
-		"not tracked: %s (run `dotfiles track %s` first)", display, display)
+		"not tracked: %s (run `dfm track %s` first)", display, display)
 }
 
 // readBounded reads a file refusing payloads larger than max bytes.

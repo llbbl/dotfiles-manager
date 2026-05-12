@@ -1,7 +1,7 @@
 # dotfiles-manager — example config
 #
 # Real config lives at ~/.config/dotfiles/config.toml (or the path passed
-# via --config). Run `dotfiles config show` to see the effective config
+# via --config). Run `dfm config show` to see the effective config
 # after defaults + env overrides are applied.
 
 [repo]
@@ -11,7 +11,7 @@ remote = "git@github.com:llbbl/dotfiles-private.git"
 local  = "~/.local/share/dotfiles/repo"
 
 [ai]
-# Provider used for `dotfiles ask` and `dotfiles suggest`. Currently only
+# Provider used for `dfm ask` and `dfm suggest`. Currently only
 # "claude-code" is implemented; the interface is pluggable.
 provider = "claude-code"
 
@@ -24,7 +24,7 @@ model      = ""
 extra_args = []
 
 [log]
-# JSONL action log written by `dotfiles sync` and other writes.
+# JSONL action log written by `dfm sync` and other writes.
 path = "~/.local/share/dotfiles/logs/actions.jsonl"
 
 # Where audit events are stored. One of:
@@ -37,8 +37,8 @@ backend = "both"
 
 [backup]
 # Pre-modification snapshot store. Blobs are content-addressed (sha256)
-# and deduplicated. See `dotfiles backups`, `dotfiles restore`, and
-# `dotfiles prune`.
+# and deduplicated. See `dfm backups`, `dfm restore`, and
+# `dfm prune`.
 dir            = "~/.local/share/dotfiles/backups"
 # Soft cap on total blob bytes; 0 = unlimited.
 max_total_mb   = 500

@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newEditCmd builds the `dotfiles edit` command, which takes a pre-edit
+// newEditCmd builds the `dfm edit` command, which takes a pre-edit
 // snapshot of a tracked file, opens it in $EDITOR, and on a real change
 // updates the stored hash and records an `edit` audit event.
 func newEditCmd() *cobra.Command {

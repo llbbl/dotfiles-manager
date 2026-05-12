@@ -40,7 +40,7 @@ type fileChange struct {
 	New         bool   `json:"new"`
 }
 
-// newSyncCmd builds the `dotfiles sync` command, which copies every
+// newSyncCmd builds the `dfm sync` command, which copies every
 // tracked file's current contents into the private backup repo and
 // commits + pushes the result. --dry-run reports the planned changes
 // without writing, --message overrides the commit message, --strategy
@@ -75,7 +75,7 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				if errors.Is(err, vcs.ErrNotInitialized) {
 					fmt.Fprintf(c.ErrOrStderr(),
-						"sync: backup repo not initialized at %s; run `dotfiles init`\n",
+						"sync: backup repo not initialized at %s; run `dfm init`\n",
 						cfg.Repo.Local)
 					os.Exit(exitInitNoTTY)
 				}

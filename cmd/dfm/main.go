@@ -1,4 +1,4 @@
-// Package main is the entry point for the `dotfiles` CLI, which tracks,
+// Package main is the entry point for the `dfm` CLI, which tracks,
 // versions, and AI-improves a user's dotfiles. It manages a local libSQL
 // state database and mirrors change history to a private backup git
 // repository so configuration changes are reviewable and recoverable.
@@ -54,15 +54,15 @@ func main() {
 	}
 }
 
-// newRootCmd builds the top-level `dotfiles` cobra command. It wires the
+// newRootCmd builds the top-level `dfm` cobra command. It wires the
 // persistent --config/--verbose flags, loads config + dlog + audit logger
 // in PersistentPreRunE, closes them in PersistentPostRunE, and registers
 // every subcommand.
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "dotfiles",
+		Use:   "dfm",
 		Short: "Manage, version, and AI-improve your dotfiles",
-		Long: "dotfiles tracks your configuration files in a private git repository, " +
+		Long: "dfm tracks your configuration files in a private git repository, " +
 			"logs every change, and integrates with AI coding agents (default: Claude Code) " +
 			"to suggest improvements as reviewable patches.",
 		SilenceUsage: true,
@@ -92,7 +92,7 @@ func newRootCmd() *cobra.Command {
 			c.SetContext(config.WithContext(c.Context(), cfg))
 
 			// Best-effort: build an audit Logger backed by libSQL. If the
-			// store can't open (e.g. `dotfiles config` before init), keep
+			// store can't open (e.g. `dfm config` before init), keep
 			// the default unset and let callers no-op.
 			s, serr := store.New(c.Context(), cfg)
 			if serr != nil {
@@ -156,14 +156,14 @@ func newRootCmd() *cobra.Command {
 	return cmd
 }
 
-// newVersionCmd builds the `dotfiles version` command, which prints the
+// newVersionCmd builds the `dfm version` command, which prints the
 // compiled-in version string and exits.
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
 		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("dotfiles %s\n", version)
+			fmt.Printf("dfm %s\n", version)
 		},
 	}
 }

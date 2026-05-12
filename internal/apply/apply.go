@@ -60,7 +60,7 @@ type ApplyResult struct {
 
 // PostSnapshotError is returned when a failure occurs after the
 // pre-apply snapshot was taken. The user can recover via
-// `dotfiles restore <SnapshotID>`. Status of the suggestion stays
+// `dfm restore <SnapshotID>`. Status of the suggestion stays
 // "pending" so retries remain possible.
 type PostSnapshotError struct {
 	SnapshotID string
@@ -69,7 +69,7 @@ type PostSnapshotError struct {
 
 // Error implements the error interface and includes the recovery hint.
 func (e *PostSnapshotError) Error() string {
-	return fmt.Sprintf("%v (recover with: dotfiles restore %s)", e.Err, e.SnapshotID)
+	return fmt.Sprintf("%v (recover with: dfm restore %s)", e.Err, e.SnapshotID)
 }
 
 // Unwrap returns the underlying error.

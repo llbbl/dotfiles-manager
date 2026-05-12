@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newListCmd builds the `dotfiles list` command, which prints every
+// newListCmd builds the `dfm list` command, which prints every
 // tracked file with its added-at date and short content hash. --json
 // emits the listing as JSON.
 func newListCmd() *cobra.Command {
@@ -53,7 +53,7 @@ func newListCmd() *cobra.Command {
 
 			if len(files) == 0 {
 				fmt.Fprintln(c.OutOrStdout(),
-					"no tracked files. use `dotfiles track <path>` to add one.")
+					"no tracked files. use `dfm track <path>` to add one.")
 				return nil
 			}
 

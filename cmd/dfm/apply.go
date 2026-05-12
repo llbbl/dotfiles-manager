@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newApplyCmd builds the `dotfiles apply` command, which applies a
+// newApplyCmd builds the `dfm apply` command, which applies a
 // previously generated AI suggestion to its target file after a
 // confirmation prompt. The --yes flag skips the prompt and --json emits
 // a structured result.
@@ -142,7 +142,7 @@ func newApplyCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "applied %s to %s\n", id, file.DisplayPath)
 			fmt.Fprintf(out, "hunks: %d\n", res.HunksApplied)
-			fmt.Fprintf(out, "pre-apply snapshot: %s   (recover with: dotfiles restore %s)\n",
+			fmt.Fprintf(out, "pre-apply snapshot: %s   (recover with: dfm restore %s)\n",
 				res.SnapshotID, res.SnapshotID)
 			fmt.Fprintf(out, "new sha256: %s\n", short)
 			return nil

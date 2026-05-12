@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newAppendCmd builds the `dotfiles append` command, which takes a
+// newAppendCmd builds the `dfm append` command, which takes a
 // pre-edit snapshot of a tracked file and then appends the supplied text
 // to it via an atomic write. The --force flag bypasses the secrets
 // pre-flight scan on the appended text.

@@ -23,7 +23,7 @@ If you don't use mise, install Go and just manually at the pinned versions.
 |---|---|
 | `just install` | `go mod tidy` + `go mod download` |
 | `just dev <args>` | Run the CLI from source with the given arguments |
-| `just build` | Build `./bin/dotfiles` |
+| `just build` | Build `./bin/dfm` |
 | `just build-versioned` | Build with the current git tag (or `dev`) injected via ldflags |
 | `just test` | `go test ./...` |
 | `just test-race` | `go test -race -cover ./...` |
@@ -70,7 +70,7 @@ DOTFILES_LOG_LEVEL=debug \
 
 ## State store
 
-By default, state lives in an embedded libSQL file at `~/.local/share/dotfiles/state.db`. Migrations live in [`internal/store/migrations/`](../internal/store/migrations) and run automatically on every `dotfiles migrate up`.
+By default, state lives in an embedded libSQL file at `~/.local/share/dotfiles/state.db`. Migrations live in [`internal/store/migrations/`](../internal/store/migrations) and run automatically on every `dfm migrate up`.
 
 To use a remote Turso database instead:
 

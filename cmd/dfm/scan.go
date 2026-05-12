@@ -12,7 +12,7 @@ import (
 
 const scanExitFinding = 3
 
-// newScanCmd builds the hidden `dotfiles scan` command, which runs the
+// newScanCmd builds the hidden `dfm scan` command, which runs the
 // secrets pre-flight scanner against a single file and exits with code
 // 3 if any findings are reported. --json emits findings as JSON and
 // --quiet suppresses the human-readable table.

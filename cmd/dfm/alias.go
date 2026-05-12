@@ -23,9 +23,9 @@ import (
 // reject hyphens — they're legal in some shells but not portable.
 var aliasNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// newAliasCmd builds the parent `dotfiles alias` command and registers
+// newAliasCmd builds the parent `dfm alias` command and registers
 // its add/remove/list subcommands. The helper is a shell-aware thin
-// wrapper around the same atomic-append machinery as `dotfiles append`.
+// wrapper around the same atomic-append machinery as `dfm append`.
 func newAliasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alias",
@@ -172,7 +172,7 @@ func newAliasAddCmd() *cobra.Command {
 			file, canonical, err := resolveTracked(c.Context(), s, target)
 			if err != nil {
 				fmt.Fprintf(c.ErrOrStderr(),
-					"not tracked: %s. Run: dotfiles track %s\n", target, target)
+					"not tracked: %s. Run: dfm track %s\n", target, target)
 				os.Exit(exitAlreadyOrMiss)
 			}
 
@@ -289,7 +289,7 @@ func newAliasRemoveCmd() *cobra.Command {
 			file, canonical, err := resolveTracked(c.Context(), s, target)
 			if err != nil {
 				fmt.Fprintf(c.ErrOrStderr(),
-					"not tracked: %s. Run: dotfiles track %s\n", target, target)
+					"not tracked: %s. Run: dfm track %s\n", target, target)
 				os.Exit(exitAlreadyOrMiss)
 			}
 

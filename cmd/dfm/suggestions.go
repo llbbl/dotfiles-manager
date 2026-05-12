@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newSuggestionsCmd builds the `dotfiles suggestions` command, which
+// newSuggestionsCmd builds the `dfm suggestions` command, which
 // lists stored AI suggestions. --status filters by lifecycle state
 // (pending|applied|rejected|stale|all, default pending), --file scopes
 // to one tracked file, and --json emits the list as JSON.

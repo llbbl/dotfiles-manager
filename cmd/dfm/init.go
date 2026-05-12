@@ -22,7 +22,7 @@ const (
 	exitInitNoTTY = 4
 )
 
-// newInitCmd builds the `dotfiles init` command, which performs
+// newInitCmd builds the `dfm init` command, which performs
 // first-run setup of the private backup repo: cloning an existing
 // remote, or initializing a new repo and optionally creating the
 // matching private GitHub remote with `gh`. --remote sets the URL,

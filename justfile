@@ -3,8 +3,8 @@
 
 set dotenv-load := true
 
-BIN := "dotfiles"
-PKG := "./cmd/dotfiles"
+BIN := "dfm"
+PKG := "./cmd/dfm"
 
 # Default recipe: show help
 default:

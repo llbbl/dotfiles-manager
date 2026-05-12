@@ -6,7 +6,7 @@ A quick tour of the moving parts. The codebase is small enough that you can read
 
 ```
                       ┌─────────────────┐
-                      │   cmd/dotfiles  │   cobra commands; thin glue
+                      │     cmd/dfm     │   cobra commands; thin glue
                       └────────┬────────┘
                                │
         ┌────────────┬─────────┼──────────┬──────────────┐
@@ -30,7 +30,7 @@ Every package is intentionally small. The interesting decisions live in the seam
 
 State lives in a libSQL database — either an embedded file at `~/.local/share/dotfiles/state.db` (default) or a remote Turso instance when `TURSO_DATABASE_URL` is set. The driver is [`turso.tech/database/tursogo`](https://docs.turso.tech/sdk/go/quickstart), pure-Go (no cgo), supporting both local file and remote URLs through a single `sql.Open("turso", …)` interface.
 
-Migrations are managed by [`pressly/goose`](https://github.com/pressly/goose) as a library (no goose CLI required at runtime). SQL files live under `internal/store/migrations/` and are embedded into the binary via `go:embed`. `dotfiles migrate {status,up,down,redo}` exposes the same operations to operators.
+Migrations are managed by [`pressly/goose`](https://github.com/pressly/goose) as a library (no goose CLI required at runtime). SQL files live under `internal/store/migrations/` and are embedded into the binary via `go:embed`. `dfm migrate {status,up,down,redo}` exposes the same operations to operators.
 
 Tables today:
 
@@ -49,15 +49,15 @@ Resolves user-supplied paths to canonical absolute form, rejects directories and
 
 ## Secrets pre-flight: `internal/secrets`
 
-Heuristic scanner with nine regex rules: AWS keys, GitHub tokens, JWTs, PEM-style private keys, `.env`-shaped assignments, Slack tokens, OpenAI and Anthropic keys (with each other's prefix suppressed to avoid double-flagging). Files larger than 1 MiB are skipped; binary detection on the first 8 KiB short-circuits before any regex runs. Findings include masked excerpts only — the raw matched bytes never appear in stdout, JSON output, or audit records. `dotfiles track` calls into the scanner and refuses to add a flagged file unless `--force` is passed.
+Heuristic scanner with nine regex rules: AWS keys, GitHub tokens, JWTs, PEM-style private keys, `.env`-shaped assignments, Slack tokens, OpenAI and Anthropic keys (with each other's prefix suppressed to avoid double-flagging). Files larger than 1 MiB are skipped; binary detection on the first 8 KiB short-circuits before any regex runs. Findings include masked excerpts only — the raw matched bytes never appear in stdout, JSON output, or audit records. `dfm track` calls into the scanner and refuses to add a flagged file unless `--force` is passed.
 
 ## Snapshot system: `internal/snapshot`
 
 Content-addressed blob store under `~/.local/share/dotfiles/backups/`. Files are deduped by SHA-256 — identical content is written once, with each `snapshots` row pointing at the shared blob. Atomic writes: `<dest>.tmp` then rename. Every newly written blob is read back and re-hashed; on mismatch the temp file is removed and an `ErrChecksumMismatch` returned.
 
-Snapshots fire automatically on `track` (initial), on `apply` (pre-apply), and on `sync` (pre-sync). Manual `dotfiles backup` is always available. `dotfiles restore` writes a snapshot's bytes back to disk atomically; the source mode bits are inherited when the file still exists.
+Snapshots fire automatically on `track` (initial), on `apply` (pre-apply), and on `sync` (pre-sync). Manual `dfm backup` is always available. `dfm restore` writes a snapshot's bytes back to disk atomically; the source mode bits are inherited when the file still exists.
 
-`dotfiles prune` evicts by retention window then by size cap, but always preserves the most recent snapshot per file. Blob files are ref-counted in-memory during prune and only removed when no row points at them.
+`dfm prune` evicts by retention window then by size cap, but always preserves the most recent snapshot per file. Blob files are ref-counted in-memory during prune and only removed when no row points at them.
 
 ## Apply pipeline: `internal/apply`
 
@@ -73,9 +73,9 @@ The full apply flow is:
 6. Update `tracked_files.last_hash` with the new SHA-256.
 7. Set `suggestions.status='applied'` + `decided_at=now`.
 
-If any step after the snapshot fails, the source file is left untouched, the suggestion stays `pending`, the error wraps a `PostSnapshotError` carrying the snapshot id, and an `apply_failed` audit record is emitted with a `dotfiles restore <snap-id>` hint.
+If any step after the snapshot fails, the source file is left untouched, the suggestion stays `pending`, the error wraps a `PostSnapshotError` carrying the snapshot id, and an `apply_failed` audit record is emitted with a `dfm restore <snap-id>` hint.
 
-`dotfiles reject <id>` is the no-op decision counterpart.
+`dfm reject <id>` is the no-op decision counterpart.
 
 ## AI provider: `internal/ai` + `internal/ai/claudecode`
 
@@ -93,7 +93,7 @@ The subprocess environment is scrubbed to a small allowlist (`PATH`, `HOME`, `US
 
 Thin shell-out wrapper around the system `git` binary. The subprocess environment is scrubbed to a minimal allowlist; commit identity is pinned via `-c user.name`/`-c user.email` so user-global git config doesn't bleed in; force-pushes use `--force-with-lease`, never bare `--force`.
 
-`dotfiles sync` enumerates tracked files, snapshots each one with `ReasonPreSync`, writes mirrored copies into the backup repo at `files/<sanitized-path>`, appends per-file and summary records to the backup repo's own `logs/actions.jsonl`, commits with a structured message, and pushes. Drift between local and remote backup repos is resolved by an explicit strategy (`auto` / `keep-local` / `keep-remote` / `abort`) or by an interactive three-way prompt.
+`dfm sync` enumerates tracked files, snapshots each one with `ReasonPreSync`, writes mirrored copies into the backup repo at `files/<sanitized-path>`, appends per-file and summary records to the backup repo's own `logs/actions.jsonl`, commits with a structured message, and pushes. Drift between local and remote backup repos is resolved by an explicit strategy (`auto` / `keep-local` / `keep-remote` / `abort`) or by an interactive three-way prompt.
 
 Backup paths sanitize to `files/<rel-to-home>` for `$HOME`-rooted files and `files/_abs/<stripped>` for everything else. Username never appears.
 
@@ -106,7 +106,7 @@ The audit log records *user-visible* events — anything a user might want to lo
 - `db` — table only.
 - `none` — disabled.
 
-`DOTFILES_LOG_BACKEND` overrides the TOML value. The backup repo's own `logs/actions.jsonl` is written by `dotfiles sync` unconditionally — that file is the committed durable trail and is independent of the local-log backend choice.
+`DOTFILES_LOG_BACKEND` overrides the TOML value. The backup repo's own `logs/actions.jsonl` is written by `dfm sync` unconditionally — that file is the committed durable trail and is independent of the local-log backend choice.
 
 Records always carry typed attributes (suggestion id, file id, display path, snapshot id, hashes, durations, exit codes). Diff bodies, prompt bodies, response bodies, and file contents never appear.
 

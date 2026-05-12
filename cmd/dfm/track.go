@@ -20,7 +20,7 @@ const (
 	exitAlreadyOrMiss = 4
 )
 
-// newTrackCmd builds the `dotfiles track` command, which begins managing
+// newTrackCmd builds the `dfm track` command, which begins managing
 // a file: running the secrets pre-flight scan, recording the file in
 // the state DB, and taking an initial snapshot. --force bypasses the
 // secrets scan, --reset re-tracks a previously untracked file, and

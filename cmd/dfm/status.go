@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newStatusCmd builds the `dotfiles status` command, which compares
+// newStatusCmd builds the `dfm status` command, which compares
 // each tracked file's on-disk hash against its recorded hash and prints
 // the clean/modified/missing status. An optional path argument scopes
 // the check to one file; --json emits the report as JSON; the process
@@ -69,7 +69,7 @@ func newStatusCmd() *cobra.Command {
 				}
 			} else if len(reports) == 0 {
 				fmt.Fprintln(c.OutOrStdout(),
-					"no tracked files. use `dotfiles track <path>` to add one.")
+					"no tracked files. use `dfm track <path>` to add one.")
 				return nil
 			} else {
 				tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)

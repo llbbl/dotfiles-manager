@@ -11,7 +11,7 @@ linters:
       # the Close error is the established Go idiom for read paths.
       # Write paths in this repo handle Close explicitly (Sync + Close with
       # error checked) -- see internal/apply/apply.go, internal/config's
-      # Save, and cmd/dotfiles/append.go's atomicWrite -- so this exclusion
+      # Save, and cmd/dfm/append.go's atomicWrite -- so this exclusion
       # does not hide write errors.
       exclude-functions:
         - (*os.File).Close

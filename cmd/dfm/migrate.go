@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newMigrateCmd builds the `dotfiles migrate` command group for managing
+// newMigrateCmd builds the `dfm migrate` command group for managing
 // state-database schema migrations. Subcommands are status, up, down,
 // and redo, each delegating to goose against the configured store.
 func newMigrateCmd() *cobra.Command {
