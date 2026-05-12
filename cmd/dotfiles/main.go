@@ -137,6 +137,7 @@ func newRootCmd() *cobra.Command {
 		newUntrackCmd(),
 		newEditCmd(),
 		newAppendCmd(),
+		newAliasCmd(),
 		newListCmd(),
 		newStatusCmd(),
 		newBackupCmd(),
