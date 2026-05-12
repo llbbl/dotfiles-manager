@@ -33,6 +33,8 @@ func newInitCmd() *cobra.Command {
 		remoteFlag   string
 		createRemote bool
 		yes          bool
+		tursoFlag    bool
+		tursoDBName  string
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -43,99 +45,149 @@ func newInitCmd() *cobra.Command {
 			if cfg == nil {
 				return errors.New("config not loaded")
 			}
-			if remoteFlag != "" {
-				cfg.Repo.Remote = remoteFlag
-			}
-			if cfg.Repo.Remote == "" {
-				fmt.Fprintln(c.ErrOrStderr(), "init: --remote (or [repo].remote) is required")
-				os.Exit(exitResolveErr)
-			}
-			if cfg.Repo.Local == "" {
-				fmt.Fprintln(c.ErrOrStderr(), "init: [repo].local is empty")
-				os.Exit(exitResolveErr)
-			}
 
-			if _, err := vcs.Open(cfg); err == nil {
-				fmt.Fprintf(c.OutOrStdout(), "already initialized: %s\n", cfg.Repo.Local)
-				return nil
-			}
+			// Determine whether the user asked for the repo flow.
+			// Repo flow is requested when --remote, --create-remote, or
+			// a non-empty [repo].remote in config is present. --turso
+			// alone bypasses the repo flow entirely.
+			repoRequested := remoteFlag != "" || createRemote || cfg.Repo.Remote != ""
 
-			ctx := c.Context()
-			reachable, hasRefs, err := lsRemote(ctx, cfg.Repo.Remote)
-			if err != nil && reachable {
-				return err
-			}
-			if reachable && hasRefs {
-				if _, err := vcs.Clone(ctx, cfg); err != nil {
-					return err
+			runRepoFlow := func() error {
+				if remoteFlag != "" {
+					cfg.Repo.Remote = remoteFlag
 				}
-				fmt.Fprintf(c.OutOrStdout(), "cloned %s -> %s\n", cfg.Repo.Remote, cfg.Repo.Local)
-				audit.Log(ctx, "init", map[string]any{
-					"mode":   "clone",
-					"local":  cfg.Repo.Local,
-				})
-				return nil
+				if cfg.Repo.Remote == "" {
+					fmt.Fprintln(c.ErrOrStderr(), "init: --remote (or [repo].remote) is required")
+					os.Exit(exitResolveErr)
+				}
+				if cfg.Repo.Local == "" {
+					fmt.Fprintln(c.ErrOrStderr(), "init: [repo].local is empty")
+					os.Exit(exitResolveErr)
+				}
+				return runRepoInit(c, cfg, createRemote, yes)
 			}
 
-			// Creation flow.
-			if !reachable && !createRemote {
-				fmt.Fprintf(c.ErrOrStderr(),
-					"init: remote %s is unreachable; pass --create-remote to create it via gh\n",
-					cfg.Repo.Remote)
-				os.Exit(exitInitNoTTY)
-			}
-			if !createRemote {
-				if !isTTY() {
-					fmt.Fprintln(c.ErrOrStderr(),
-						"init: remote is empty and stdin is not a TTY; rerun with --create-remote")
-					os.Exit(exitInitNoTTY)
+			runTursoFlow := func() error {
+				name := tursoDBName
+				if name == "" {
+					name = "dotfiles-state"
 				}
-				if !yes {
-					ok, err := confirm(c, "Remote is empty. Create it via `gh repo create` and push? [y/N] ")
+				path := flagConfigPath
+				if path == "" {
+					p, err := config.DefaultPath()
 					if err != nil {
 						return err
 					}
-					if !ok {
-						fmt.Fprintln(c.ErrOrStderr(), "init: aborted")
-						os.Exit(exitInitNoTTY)
-					}
+					path = p
 				}
+				return runTursoInit(c.Context(), cfg, path, name)
 			}
 
-			if !reachable || !hasRefs {
-				if err := ghCreatePrivate(ctx, cfg.Repo.Remote); err != nil {
+			// Neither: existing error path.
+			if !repoRequested && !tursoFlag {
+				fmt.Fprintln(c.ErrOrStderr(), "init: --remote (or [repo].remote) is required")
+				os.Exit(exitResolveErr)
+			}
+
+			if repoRequested {
+				if err := runRepoFlow(); err != nil {
 					return err
 				}
 			}
-
-			r, err := vcs.InitLocal(ctx, cfg)
-			if err != nil {
-				return err
+			if tursoFlag {
+				if err := runTursoFlow(); err != nil {
+					return err
+				}
 			}
-			name := repoNameFromRemote(cfg.Repo.Remote)
-			readme := fmt.Sprintf("# %s\n\nPrivate dotfiles-manager backup.\n", name)
-			if err := r.WriteFile("README.md", []byte(readme)); err != nil {
-				return err
-			}
-			if _, err := r.CommitAll(ctx, "init: dotfiles-manager backup repo"); err != nil {
-				return err
-			}
-			if err := r.Push(ctx); err != nil {
-				return err
-			}
-
-			audit.Log(ctx, "init", map[string]any{
-				"mode":  "create",
-				"local": cfg.Repo.Local,
-			})
-			fmt.Fprintf(c.OutOrStdout(), "initialized %s -> %s\n", cfg.Repo.Remote, cfg.Repo.Local)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&remoteFlag, "remote", "", "remote git URL (overrides [repo].remote)")
 	cmd.Flags().BoolVar(&createRemote, "create-remote", false, "create the remote via gh if it doesn't exist")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the gh-create confirmation")
+	cmd.Flags().BoolVar(&tursoFlag, "turso", false, "set up a Turso libSQL remote DB (orthogonal to repo flow)")
+	cmd.Flags().StringVar(&tursoDBName, "turso-db-name", "dotfiles-state", "Turso DB name to create or reuse")
 	return cmd
+}
+
+// runRepoInit performs the repo clone-or-create flow (extracted from
+// the original RunE body so --turso can compose orthogonally with it).
+func runRepoInit(c *cobra.Command, cfg *config.Config, createRemote, yes bool) error {
+	if _, err := vcs.Open(cfg); err == nil {
+		fmt.Fprintf(c.OutOrStdout(), "already initialized: %s\n", cfg.Repo.Local)
+		return nil
+	}
+
+	ctx := c.Context()
+	reachable, hasRefs, err := lsRemote(ctx, cfg.Repo.Remote)
+	if err != nil && reachable {
+		return err
+	}
+	if reachable && hasRefs {
+		if _, err := vcs.Clone(ctx, cfg); err != nil {
+			return err
+		}
+		fmt.Fprintf(c.OutOrStdout(), "cloned %s -> %s\n", cfg.Repo.Remote, cfg.Repo.Local)
+		audit.Log(ctx, "init", map[string]any{
+			"mode":  "clone",
+			"local": cfg.Repo.Local,
+		})
+		return nil
+	}
+
+	// Creation flow.
+	if !reachable && !createRemote {
+		fmt.Fprintf(c.ErrOrStderr(),
+			"init: remote %s is unreachable; pass --create-remote to create it via gh\n",
+			cfg.Repo.Remote)
+		os.Exit(exitInitNoTTY)
+	}
+	if !createRemote {
+		if !isTTY() {
+			fmt.Fprintln(c.ErrOrStderr(),
+				"init: remote is empty and stdin is not a TTY; rerun with --create-remote")
+			os.Exit(exitInitNoTTY)
+		}
+		if !yes {
+			ok, err := confirm(c, "Remote is empty. Create it via `gh repo create` and push? [y/N] ")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(c.ErrOrStderr(), "init: aborted")
+				os.Exit(exitInitNoTTY)
+			}
+		}
+	}
+
+	if !reachable || !hasRefs {
+		if err := ghCreatePrivate(ctx, cfg.Repo.Remote); err != nil {
+			return err
+		}
+	}
+
+	r, err := vcs.InitLocal(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	name := repoNameFromRemote(cfg.Repo.Remote)
+	readme := fmt.Sprintf("# %s\n\nPrivate dotfiles-manager backup.\n", name)
+	if err := r.WriteFile("README.md", []byte(readme)); err != nil {
+		return err
+	}
+	if _, err := r.CommitAll(ctx, "init: dotfiles-manager backup repo"); err != nil {
+		return err
+	}
+	if err := r.Push(ctx); err != nil {
+		return err
+	}
+
+	audit.Log(ctx, "init", map[string]any{
+		"mode":  "create",
+		"local": cfg.Repo.Local,
+	})
+	fmt.Fprintf(c.OutOrStdout(), "initialized %s -> %s\n", cfg.Repo.Remote, cfg.Repo.Local)
+	return nil
 }
 
 // lsRemote returns (reachable, hasRefs, err). A reachable empty repo is
