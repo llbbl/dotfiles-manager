@@ -129,13 +129,50 @@ func buildAliasLine(family, name, command string) string {
 
 // aliasMatchRe returns a compiled regex matching any line that defines
 // the given alias name in the given shell family. Used by `remove` and
-// indirectly by `list` (which has its own capture-style regex).
+// indirectly by `list` (which has its own capture-style regex). Retained
+// as the legacy bare-line matcher after dfm switched to emitting fenced
+// blocks via buildAliasBlock — still used to detect, replace, and strip
+// un-fenced definitions written by older dfm versions or by hand.
 func aliasMatchRe(family, name string) *regexp.Regexp {
 	q := regexp.QuoteMeta(name)
 	if family == "fish" {
 		return regexp.MustCompile(`^\s*alias\s+` + q + `\s+`)
 	}
 	return regexp.MustCompile(`^\s*alias\s+` + q + `\s*=`)
+}
+
+// buildAliasBlock returns the fenced multi-line block for an alias. The
+// block has the shape:
+//
+//	# >>> dfm:alias <name> >>>
+//	alias <name>='<cmd>'
+//	# <<< dfm:alias <name> <<<
+//
+// and includes a trailing newline so it can be concatenated onto existing
+// content without further fixup. The body line is delegated to
+// buildAliasLine so quoting rules for posix vs fish stay in one place.
+// The bare-line form (buildAliasLine) is kept for use in the test suite
+// and as the legacy fallback recognised by aliasMatchRe.
+//
+// Comment syntax is `#` in both POSIX shells and fish, so the same fence
+// works across families.
+func buildAliasBlock(family, name, command string) string {
+	body := buildAliasLine(family, name, command) // already trailing \n
+	return fmt.Sprintf("# >>> dfm:alias %s >>>\n%s# <<< dfm:alias %s <<<\n",
+		name, body, name)
+}
+
+// aliasBlockRe matches a complete fenced block for the given alias name
+// (open fence, one body line, close fence). The match is tolerant of
+// leading whitespace on the fence lines and is multi-line aware. Used
+// by add (dup-detect + replace) and remove. The trailing newline after
+// the close fence is optional so a block flush against EOF still matches.
+func aliasBlockRe(name string) *regexp.Regexp {
+	q := regexp.QuoteMeta(name)
+	return regexp.MustCompile(
+		`(?m)^[ \t]*# >>> dfm:alias ` + q + ` >>>\n` +
+			`[^\n]*\n` +
+			`[ \t]*# <<< dfm:alias ` + q + ` <<<\n?`)
 }
 
 func newAliasAddCmd() *cobra.Command {
@@ -181,8 +218,8 @@ func newAliasAddCmd() *cobra.Command {
 				os.Exit(exitAlreadyOrMiss)
 			}
 
-			line := buildAliasLine(family, name, command)
-			appendBytes := []byte(line)
+			block := buildAliasBlock(family, name, command)
+			appendBytes := []byte(block)
 
 			current, err := os.ReadFile(canonical)
 			if err != nil {
@@ -195,18 +232,26 @@ func newAliasAddCmd() *cobra.Command {
 
 			// Detect any existing definition(s) of this alias so we can
 			// reject duplicate adds by default, swap them under --replace,
-			// or stack them under --force.
+			// or stack them under --force. An alias counts as "defined"
+			// if EITHER a fenced dfm block or a legacy bare-line `alias
+			// <name>=...` is present — that way a user who hand-wrote an
+			// alias before adopting dfm is still protected from silent
+			// duplication on `dfm alias add`.
 			matchRe := aliasMatchRe(family, name)
-			existingMatches := 0
-			// We split on '\n' (not bufio.Scanner) so a final empty
-			// element preserves whether the file ended with a newline,
-			// which we faithfully reproduce on rewrite.
-			currentLines := strings.Split(string(current), "\n")
-			for _, ln := range currentLines {
+			blockRe := aliasBlockRe(name)
+			blockMatches := blockRe.FindAllStringIndex(string(current), -1)
+			bareMatches := 0
+			for ln := range strings.SplitSeq(string(current), "\n") {
 				if matchRe.MatchString(ln) {
-					existingMatches++
+					bareMatches++
 				}
 			}
+			// A bare line that's actually the body of a fenced block
+			// would be double-counted; subtract one bare hit per fenced
+			// block so the dup-detect logic doesn't get confused by its
+			// own emission.
+			bareOutsideBlocks := max(bareMatches-len(blockMatches), 0)
+			existingMatches := len(blockMatches) + bareOutsideBlocks
 
 			// Default path (no --replace, no --force): refuse to add a
 			// duplicate. No snapshot, no audit, no mutation — pure no-op
@@ -219,11 +264,14 @@ func newAliasAddCmd() *cobra.Command {
 
 			// Build newContent + decide the audit action discriminator.
 			// Three branches:
-			//   - replace with existing matches: substitute first match,
-			//     drop the rest, keep everything else verbatim.
+			//   - replace with existing matches: substitute the first
+			//     fenced block (or first bare line if no fenced block
+			//     exists) with the new fenced block, drop any remaining
+			//     definitions of the same alias in either form.
 			//   - replace with no existing matches: behave like append
 			//     (idempotent for scripts).
-			//   - append (default or --force): append verbatim.
+			//   - append (default or --force): append the new fenced
+			//     block verbatim.
 			var newContent []byte
 			// "sub_action" not "action": the audit logger reserves the
 			// top-level "action" key for the event name (e.g. "alias.add")
@@ -232,25 +280,56 @@ func newAliasAddCmd() *cobra.Command {
 			subAction := "append"
 			bytesDelta := 0
 			if replace && existingMatches > 0 {
-				rewritten := make([]string, 0, len(currentLines))
-				substituted := false
-				// buildAliasLine includes a trailing '\n'; when we splice
-				// it into the line-split array we want the line WITHOUT
-				// the terminator so Join("\n") reintroduces exactly one.
-				newLineNoNL := strings.TrimSuffix(line, "\n")
-				for _, ln := range currentLines {
-					if matchRe.MatchString(ln) {
-						if !substituted {
-							rewritten = append(rewritten, newLineNoNL)
-							substituted = true
+				// Strategy: strip ALL existing definitions (fenced and
+				// bare) from the file, then insert exactly one new
+				// fenced block. The insertion point is, in priority
+				// order: where the first existing fenced block lived,
+				// otherwise where the first legacy bare line lived,
+				// otherwise at EOF. This guarantees we end up with
+				// exactly one block and zero stray bare lines, even if
+				// the user hand-edited around dfm.
+				const placeholder = "\x00DFM_ALIAS_BLOCK_INSERT\x00"
+				blockNoTrail := strings.TrimSuffix(block, "\n")
+
+				// Phase 1: replace the first fenced block (if any) with
+				// the placeholder, drop the rest entirely.
+				working := string(current)
+				placedViaBlock := false
+				if len(blockMatches) > 0 {
+					working = blockRe.ReplaceAllStringFunc(working, func(_ string) string {
+						if !placedViaBlock {
+							placedViaBlock = true
+							return placeholder + "\n"
 						}
-						// drop any additional matches (collapses
-						// pre-existing duplicates to a single line)
+						return ""
+					})
+				}
+
+				// Phase 2: walk lines, drop bare matches. If the
+				// placeholder isn't already in the text (no fenced
+				// blocks existed), emit it at the position of the
+				// first bare match.
+				workingLines := strings.Split(working, "\n")
+				rewritten := make([]string, 0, len(workingLines))
+				placedViaBare := placedViaBlock
+				for _, ln := range workingLines {
+					if matchRe.MatchString(ln) {
+						if !placedViaBare {
+							rewritten = append(rewritten, placeholder)
+							placedViaBare = true
+						}
 						continue
 					}
 					rewritten = append(rewritten, ln)
 				}
-				newContent = []byte(strings.Join(rewritten, "\n"))
+				joined := strings.Join(rewritten, "\n")
+
+				// Phase 3: substitute the placeholder with the real
+				// block content. The placeholder was inserted as its
+				// own line; replacing the placeholder string (not the
+				// whole line) preserves surrounding newlines correctly.
+				finalText := strings.Replace(joined, placeholder, blockNoTrail, 1)
+				newContent = []byte(finalText)
 				subAction = "replace"
 				bytesDelta = len(newContent) - len(current)
 			} else {
@@ -394,6 +473,14 @@ func newAliasRemoveCmd() *cobra.Command {
 				return fmt.Errorf("stat %s: %w", canonical, err)
 			}
 
+			// Two-phase removal: first strip any fenced dfm blocks for
+			// this alias (the modern form), then sweep any remaining
+			// legacy bare-line definitions. Both phases contribute to
+			// the audit count.
+			blockRe := aliasBlockRe(name)
+			blocksRemoved := len(blockRe.FindAllStringIndex(string(current), -1))
+			afterBlocks := blockRe.ReplaceAllString(string(current), "")
+
 			re := aliasMatchRe(family, name)
 
 			// We split deliberately on '\n' (not bufio.Scanner) so we
@@ -401,16 +488,17 @@ func newAliasRemoveCmd() *cobra.Command {
 			// strings.Split("a\nb\n", "\n") yields ["a","b",""], and
 			// joining the kept slice with "\n" reproduces the original
 			// terminator state when no lines are removed from the tail.
-			lines := strings.Split(string(current), "\n")
+			lines := strings.Split(afterBlocks, "\n")
 			kept := make([]string, 0, len(lines))
-			removed := 0
+			bareRemoved := 0
 			for _, ln := range lines {
 				if re.MatchString(ln) {
-					removed++
+					bareRemoved++
 					continue
 				}
 				kept = append(kept, ln)
 			}
+			removed := blocksRemoved + bareRemoved
 			if removed == 0 {
 				fmt.Fprintf(c.ErrOrStderr(),
 					"alias '%s' not found in %s\n", name, file.DisplayPath)
@@ -440,15 +528,23 @@ func newAliasRemoveCmd() *cobra.Command {
 				return fmt.Errorf("update tracked_files: %w", err)
 			}
 
+			// `lines_removed` is the total count across both removal
+			// phases (fenced blocks counted as one removal each, plus
+			// any legacy bare lines). The phase breakdown is preserved
+			// as `blocks_removed` / `bare_lines_removed` for audit
+			// consumers that want to distinguish managed from legacy
+			// entries.
 			audit.Log(c.Context(), "alias.remove", map[string]any{
-				"display_path":  file.DisplayPath,
-				"file_id":       file.ID,
-				"snapshot_id":   snap.ID,
-				"alias_name":    name,
-				"shell":         family,
-				"lines_removed": removed,
-				"old_hash":      file.LastHash,
-				"new_hash":      newHash,
+				"display_path":       file.DisplayPath,
+				"file_id":            file.ID,
+				"snapshot_id":        snap.ID,
+				"alias_name":         name,
+				"shell":              family,
+				"lines_removed":      removed,
+				"blocks_removed":     blocksRemoved,
+				"bare_lines_removed": bareRemoved,
+				"old_hash":           file.LastHash,
+				"new_hash":           newHash,
 			})
 
 			fmt.Fprintf(c.OutOrStdout(),
