@@ -23,6 +23,14 @@ import (
 // reject hyphens — they're legal in some shells but not portable.
 var aliasNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// aliasGroupNameRe is what we accept for `--group <name>`. We're stricter
+// than alias names: must start with a letter (so the fence comment never
+// gets confused for a directive), allow hyphens (group names are display
+// labels, not shell identifiers), keep regex-special chars out. This lets
+// us interpolate the value directly into a fence regex without
+// QuoteMeta gymnastics.
+var aliasGroupNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+
 // newAliasCmd builds the parent `dfm alias` command and registers
 // its add/remove/list subcommands. The helper is a shell-aware thin
 // wrapper around the same atomic-append machinery as `dfm append`.
@@ -130,9 +138,8 @@ func buildAliasLine(family, name, command string) string {
 // aliasMatchRe returns a compiled regex matching any line that defines
 // the given alias name in the given shell family. Used by `remove` and
 // indirectly by `list` (which has its own capture-style regex). Retained
-// as the legacy bare-line matcher after dfm switched to emitting fenced
-// blocks via buildAliasBlock — still used to detect, replace, and strip
-// un-fenced definitions written by older dfm versions or by hand.
+// as the legacy bare-line matcher: in the shared-block era this matches
+// both body lines inside a managed block and stray bare lines outside.
 func aliasMatchRe(family, name string) *regexp.Regexp {
 	q := regexp.QuoteMeta(name)
 	if family == "fish" {
@@ -141,33 +148,12 @@ func aliasMatchRe(family, name string) *regexp.Regexp {
 	return regexp.MustCompile(`^\s*alias\s+` + q + `\s*=`)
 }
 
-// buildAliasBlock returns the fenced multi-line block for an alias. The
-// block has the shape:
-//
-//	# >>> dfm:alias <name> >>>
-//	alias <name>='<cmd>'
-//	# <<< dfm:alias <name> <<<
-//
-// and includes a trailing newline so it can be concatenated onto existing
-// content without further fixup. The body line is delegated to
-// buildAliasLine so quoting rules for posix vs fish stay in one place.
-// The bare-line form (buildAliasLine) is kept for use in the test suite
-// and as the legacy fallback recognised by aliasMatchRe.
-//
-// Comment syntax is `#` in both POSIX shells and fish, so the same fence
-// works across families.
-func buildAliasBlock(family, name, command string) string {
-	body := buildAliasLine(family, name, command) // already trailing \n
-	return fmt.Sprintf("# >>> dfm:alias %s >>>\n%s# <<< dfm:alias %s <<<\n",
-		name, body, name)
-}
-
-// aliasBlockRe matches a complete fenced block for the given alias name
-// (open fence, one body line, close fence). The match is tolerant of
-// leading whitespace on the fence lines and is multi-line aware. Used
-// by add (dup-detect + replace) and remove. The trailing newline after
-// the close fence is optional so a block flush against EOF still matches.
-func aliasBlockRe(name string) *regexp.Regexp {
+// aliasLegacyBlockRe matches the OLD per-alias fenced block format
+// emitted prior to the shared-block migration (dfm-yda). We still
+// recognise these so dup-detect, remove, and --replace continue to
+// work on rc files written by older dfm versions. New writes never
+// produce this shape.
+func aliasLegacyBlockRe(name string) *regexp.Regexp {
 	q := regexp.QuoteMeta(name)
 	return regexp.MustCompile(
 		`(?m)^[ \t]*# >>> dfm:alias ` + q + ` >>>\n` +
@@ -175,10 +161,265 @@ func aliasBlockRe(name string) *regexp.Regexp {
 			`[ \t]*# <<< dfm:alias ` + q + ` <<<\n?`)
 }
 
+// aliasDefaultBlockRe matches the entire shared default block:
+// `# >>> dfm:aliases >>>` … `# <<< dfm:aliases <<<`. Submatch 1 is the
+// body between the fences (may be empty). Trailing newline is optional
+// so EOF-flush blocks still match.
+func aliasDefaultBlockRe() *regexp.Regexp {
+	return regexp.MustCompile(
+		`(?ms)^[ \t]*# >>> dfm:aliases >>>\n` +
+			`(.*?)` +
+			`^[ \t]*# <<< dfm:aliases <<<\n?`)
+}
+
+// aliasGroupBlockRe matches the entire shared named-group block:
+// `# >>> dfm:group <name> >>>` … `# <<< dfm:group <name> <<<`. Submatch
+// 1 is the body. The group name has already been validated against
+// aliasGroupNameRe by the caller so it's safe to interpolate as a
+// literal (no regex metacharacters survive that validator).
+func aliasGroupBlockRe(group string) *regexp.Regexp {
+	return regexp.MustCompile(
+		`(?ms)^[ \t]*# >>> dfm:group ` + group + ` >>>\n` +
+			`(.*?)` +
+			`^[ \t]*# <<< dfm:group ` + group + ` <<<\n?`)
+}
+
+// aliasAnyGroupBlockRe matches any named-group block regardless of name.
+// Used by dup-detect to scan every group block in one pass. Go's RE2
+// flavor doesn't support backreferences, so we can't pin the close-fence
+// name to the open-fence name in a single regex. We accept any close
+// fence and then verify the open/close names agree at the call site. The
+// open-fence name is captured in submatch 1, body in submatch 2, the
+// close-fence name in submatch 3.
+func aliasAnyGroupBlockRe() *regexp.Regexp {
+	return regexp.MustCompile(
+		`(?ms)^[ \t]*# >>> dfm:group ([A-Za-z][A-Za-z0-9_-]*) >>>\n` +
+			`(.*?)` +
+			`^[ \t]*# <<< dfm:group ([A-Za-z][A-Za-z0-9_-]*) <<<\n?`)
+}
+
+// renderAliasesBlock builds the full default shared block from a list
+// of pre-rendered body lines (each already terminated by \n). Returns
+// the block with a trailing newline after the close fence.
+func renderAliasesBlock(bodyLines []string) string {
+	var b strings.Builder
+	b.WriteString("# >>> dfm:aliases >>>\n")
+	for _, ln := range bodyLines {
+		b.WriteString(ln)
+	}
+	b.WriteString("# <<< dfm:aliases <<<\n")
+	return b.String()
+}
+
+// renderGroupBlock builds the full named-group shared block. The group
+// name is interpolated verbatim; callers must have validated it against
+// aliasGroupNameRe first.
+func renderGroupBlock(group string, bodyLines []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# >>> dfm:group %s >>>\n", group)
+	for _, ln := range bodyLines {
+		b.WriteString(ln)
+	}
+	fmt.Fprintf(&b, "# <<< dfm:group %s <<<\n", group)
+	return b.String()
+}
+
+// extractBlockBodyLines splits a captured block body (the submatch from
+// aliasDefaultBlockRe/aliasGroupBlockRe) into its constituent newline-
+// terminated lines. Empty trailing element from the final \n is dropped.
+func extractBlockBodyLines(body string) []string {
+	if body == "" {
+		return nil
+	}
+	parts := strings.SplitAfter(body, "\n")
+	// SplitAfter keeps the separator; trim a trailing empty element if
+	// body didn't end on a newline (it always should, but be defensive).
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	return parts
+}
+
+// countAliasDefinitions scans `content` for every place the alias `name`
+// is currently defined: inside a legacy per-alias block, inside the
+// shared default block, inside any named-group block, or as a bare line
+// not belonging to any of the above. The total is what gates the
+// duplicate-rejection check.
+func countAliasDefinitions(family, name, content string) int {
+	matchRe := aliasMatchRe(family, name)
+	legacyRe := aliasLegacyBlockRe(name)
+	defaultRe := aliasDefaultBlockRe()
+	groupRe := aliasAnyGroupBlockRe()
+
+	legacyBlocks := len(legacyRe.FindAllStringIndex(content, -1))
+
+	// Count body-line hits inside each managed block.
+	sharedHits := 0
+	if m := defaultRe.FindStringSubmatch(content); m != nil {
+		body := m[1]
+		for _, ln := range extractBlockBodyLines(body) {
+			if matchRe.MatchString(ln) {
+				sharedHits++
+			}
+		}
+	}
+	for _, sub := range groupRe.FindAllStringSubmatch(content, -1) {
+		// Skip malformed blocks where the open and close names don't
+		// agree (Go's RE2 can't pin them in the regex; we check here).
+		if sub[1] != sub[3] {
+			continue
+		}
+		body := sub[2]
+		for _, ln := range extractBlockBodyLines(body) {
+			if matchRe.MatchString(ln) {
+				sharedHits++
+			}
+		}
+	}
+
+	// Bare-line scan over the whole file. We then subtract the lines
+	// that we already counted inside legacy blocks (1 body line each)
+	// and shared blocks (sharedHits, already counted explicitly).
+	bareTotal := 0
+	for ln := range strings.SplitSeq(content, "\n") {
+		if matchRe.MatchString(ln) {
+			bareTotal++
+		}
+	}
+	bareOutside := max(bareTotal-legacyBlocks-sharedHits, 0)
+
+	return legacyBlocks + sharedHits + bareOutside
+}
+
+// removeAliasEverywhere strips every definition of `name` from `content`
+// across all storage forms: legacy per-alias blocks, body lines in the
+// shared default block, body lines in every named-group block, and any
+// remaining bare lines. Empty shared blocks are dropped entirely. The
+// counts in the returned struct feed the audit log.
+type removalCounts struct {
+	legacyBlocks   int // number of legacy per-alias blocks removed
+	sharedEvicted  int // body lines pulled out of shared blocks
+	emptiedBlocks  int // shared blocks that ended up empty and were dropped
+	bareLines      int // stray un-fenced bare lines removed
+}
+
+func removeAliasEverywhere(family, name, content string) (string, removalCounts) {
+	var rc removalCounts
+	matchRe := aliasMatchRe(family, name)
+
+	// Phase 1: drop every legacy per-alias block for this name.
+	legacyRe := aliasLegacyBlockRe(name)
+	rc.legacyBlocks = len(legacyRe.FindAllStringIndex(content, -1))
+	content = legacyRe.ReplaceAllString(content, "")
+
+	// Phase 2a: rewrite the default shared block (if present), pruning
+	// any body lines that define this alias. If the block ends up empty,
+	// remove it entirely.
+	defaultRe := aliasDefaultBlockRe()
+	content = defaultRe.ReplaceAllStringFunc(content, func(full string) string {
+		m := defaultRe.FindStringSubmatch(full)
+		body := m[1]
+		kept := make([]string, 0)
+		for _, ln := range extractBlockBodyLines(body) {
+			if matchRe.MatchString(ln) {
+				rc.sharedEvicted++
+				continue
+			}
+			kept = append(kept, ln)
+		}
+		if len(kept) == 0 {
+			rc.emptiedBlocks++
+			return ""
+		}
+		return renderAliasesBlock(kept)
+	})
+
+	// Phase 2b: same treatment for every named-group block.
+	groupRe := aliasAnyGroupBlockRe()
+	content = groupRe.ReplaceAllStringFunc(content, func(full string) string {
+		m := groupRe.FindStringSubmatch(full)
+		// Mismatched open/close fence names: leave the text alone.
+		if m[1] != m[3] {
+			return full
+		}
+		groupName := m[1]
+		body := m[2]
+		kept := make([]string, 0)
+		for _, ln := range extractBlockBodyLines(body) {
+			if matchRe.MatchString(ln) {
+				rc.sharedEvicted++
+				continue
+			}
+			kept = append(kept, ln)
+		}
+		if len(kept) == 0 {
+			rc.emptiedBlocks++
+			return ""
+		}
+		return renderGroupBlock(groupName, kept)
+	})
+
+	// Phase 3: sweep any remaining bare lines (legacy un-fenced entries
+	// from before dfm fenced anything).
+	lines := strings.Split(content, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, ln := range lines {
+		if matchRe.MatchString(ln) {
+			rc.bareLines++
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	content = strings.Join(kept, "\n")
+
+	return content, rc
+}
+
+// upsertAliasIntoBlock inserts `bodyLine` into the target shared block,
+// creating the block at EOF if it doesn't yet exist. `group` is "" for
+// the default block, otherwise the validated group name.
+func upsertAliasIntoBlock(content, group, bodyLine string) (string, string) {
+	var re *regexp.Regexp
+	if group == "" {
+		re = aliasDefaultBlockRe()
+	} else {
+		re = aliasGroupBlockRe(group)
+	}
+	if loc := re.FindStringSubmatchIndex(content); loc != nil {
+		// loc[2]/loc[3] is the body capture range.
+		bodyStart, bodyEnd := loc[2], loc[3]
+		body := content[bodyStart:bodyEnd]
+		lines := extractBlockBodyLines(body)
+		lines = append(lines, bodyLine)
+		var rebuilt string
+		if group == "" {
+			rebuilt = renderAliasesBlock(lines)
+		} else {
+			rebuilt = renderGroupBlock(group, lines)
+		}
+		return content[:loc[0]] + rebuilt + content[loc[1]:], "appended"
+	}
+	// No existing block: append a fresh one. Guarantee a newline
+	// separator if the file doesn't already end in \n (or is empty,
+	// in which case we want nothing before the block).
+	prefix := content
+	if prefix != "" && !strings.HasSuffix(prefix, "\n") {
+		prefix += "\n"
+	}
+	var block string
+	if group == "" {
+		block = renderAliasesBlock([]string{bodyLine})
+	} else {
+		block = renderGroupBlock(group, []string{bodyLine})
+	}
+	return prefix + block, "created"
+}
+
 func newAliasAddCmd() *cobra.Command {
 	var (
 		shellFlag string
 		fileFlag  string
+		groupFlag string
 		force     bool
 		replace   bool
 	)
@@ -199,6 +440,10 @@ func newAliasAddCmd() *cobra.Command {
 				return exitf(exitResolveErr,
 					"--replace and --force are mutually exclusive")
 			}
+			if groupFlag != "" && !aliasGroupNameRe.MatchString(groupFlag) {
+				return exitf(exitResolveErr,
+					"invalid --group name %q: must match [A-Za-z][A-Za-z0-9_-]*", groupFlag)
+			}
 
 			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
 			if err != nil {
@@ -218,9 +463,6 @@ func newAliasAddCmd() *cobra.Command {
 				os.Exit(exitAlreadyOrMiss)
 			}
 
-			block := buildAliasBlock(family, name, command)
-			appendBytes := []byte(block)
-
 			current, err := os.ReadFile(canonical)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", canonical, err)
@@ -230,122 +472,42 @@ func newAliasAddCmd() *cobra.Command {
 				return fmt.Errorf("stat %s: %w", canonical, err)
 			}
 
-			// Detect any existing definition(s) of this alias so we can
-			// reject duplicate adds by default, swap them under --replace,
-			// or stack them under --force. An alias counts as "defined"
-			// if EITHER a fenced dfm block or a legacy bare-line `alias
-			// <name>=...` is present — that way a user who hand-wrote an
-			// alias before adopting dfm is still protected from silent
-			// duplication on `dfm alias add`.
-			matchRe := aliasMatchRe(family, name)
-			blockRe := aliasBlockRe(name)
-			blockMatches := blockRe.FindAllStringIndex(string(current), -1)
-			bareMatches := 0
-			for ln := range strings.SplitSeq(string(current), "\n") {
-				if matchRe.MatchString(ln) {
-					bareMatches++
-				}
-			}
-			// A bare line that's actually the body of a fenced block
-			// would be double-counted; subtract one bare hit per fenced
-			// block so the dup-detect logic doesn't get confused by its
-			// own emission.
-			bareOutsideBlocks := max(bareMatches-len(blockMatches), 0)
-			existingMatches := len(blockMatches) + bareOutsideBlocks
+			existingCount := countAliasDefinitions(family, name, string(current))
 
 			// Default path (no --replace, no --force): refuse to add a
-			// duplicate. No snapshot, no audit, no mutation — pure no-op
-			// rejection so scripted callers can detect & branch cleanly.
-			if existingMatches > 0 && !replace && !force {
+			// duplicate. No snapshot, no audit, no mutation.
+			if existingCount > 0 && !replace && !force {
 				return exitf(exitAlreadyOrMiss,
 					"alias '%s' already defined in %s (use --replace to overwrite, --force to append duplicate)",
 					name, file.DisplayPath)
 			}
 
-			// Build newContent + decide the audit action discriminator.
-			// Three branches:
-			//   - replace with existing matches: substitute the first
-			//     fenced block (or first bare line if no fenced block
-			//     exists) with the new fenced block, drop any remaining
-			//     definitions of the same alias in either form.
-			//   - replace with no existing matches: behave like append
-			//     (idempotent for scripts).
-			//   - append (default or --force): append the new fenced
-			//     block verbatim.
-			var newContent []byte
-			// "sub_action" not "action": the audit logger reserves the
-			// top-level "action" key for the event name (e.g. "alias.add")
-			// and overwrites any caller-supplied value, so we use
-			// sub_action as the within-event discriminator.
-			subAction := "append"
-			bytesDelta := 0
-			if replace && existingMatches > 0 {
-				// Strategy: strip ALL existing definitions (fenced and
-				// bare) from the file, then insert exactly one new
-				// fenced block. The insertion point is, in priority
-				// order: where the first existing fenced block lived,
-				// otherwise where the first legacy bare line lived,
-				// otherwise at EOF. This guarantees we end up with
-				// exactly one block and zero stray bare lines, even if
-				// the user hand-edited around dfm.
-				const placeholder = "\x00DFM_ALIAS_BLOCK_INSERT\x00"
-				blockNoTrail := strings.TrimSuffix(block, "\n")
+			bodyLine := buildAliasLine(family, name, command)
 
-				// Phase 1: replace the first fenced block (if any) with
-				// the placeholder, drop the rest entirely.
-				working := string(current)
-				placedViaBlock := false
-				if len(blockMatches) > 0 {
-					working = blockRe.ReplaceAllStringFunc(working, func(_ string) string {
-						if !placedViaBlock {
-							placedViaBlock = true
-							return placeholder + "\n"
-						}
-						return ""
-					})
-				}
-
-				// Phase 2: walk lines, drop bare matches. If the
-				// placeholder isn't already in the text (no fenced
-				// blocks existed), emit it at the position of the
-				// first bare match.
-				workingLines := strings.Split(working, "\n")
-				rewritten := make([]string, 0, len(workingLines))
-				placedViaBare := placedViaBlock
-				for _, ln := range workingLines {
-					if matchRe.MatchString(ln) {
-						if !placedViaBare {
-							rewritten = append(rewritten, placeholder)
-							placedViaBare = true
-						}
-						continue
-					}
-					rewritten = append(rewritten, ln)
-				}
-				joined := strings.Join(rewritten, "\n")
-
-				// Phase 3: substitute the placeholder with the real
-				// block content. The placeholder was inserted as its
-				// own line; replacing the placeholder string (not the
-				// whole line) preserves surrounding newlines correctly.
-				finalText := strings.Replace(joined, placeholder, blockNoTrail, 1)
-				newContent = []byte(finalText)
+			var (
+				newContent  string
+				subAction   = "append"
+				blockAction string
+			)
+			switch {
+			case replace && existingCount > 0:
+				stripped, _ := removeAliasEverywhere(family, name, string(current))
+				newContent, blockAction = upsertAliasIntoBlock(stripped, groupFlag, bodyLine)
 				subAction = "replace"
-				bytesDelta = len(newContent) - len(current)
-			} else {
-				// append path (covers: no matches at all, --replace with
-				// nothing to replace, and --force on top of existing)
-				newContent = append(append([]byte{}, current...), appendBytes...)
-				if force && existingMatches > 0 {
-					subAction = "force-append"
-				}
+			case force && existingCount > 0:
+				newContent, blockAction = upsertAliasIntoBlock(string(current), groupFlag, bodyLine)
+				subAction = "force-append"
+			default:
+				newContent, blockAction = upsertAliasIntoBlock(string(current), groupFlag, bodyLine)
 			}
+			newBytes := []byte(newContent)
+			bytesDelta := len(newBytes) - len(current)
 
 			// Same secrets pre-flight as `append`: scan the full new
 			// content so a credential can't be smuggled in via an alias
 			// body. We deliberately reuse the same exit code + message
 			// shape so the UX is uniform.
-			res, scanErr := secrets.ScanReader(bytes.NewReader(newContent))
+			res, scanErr := secrets.ScanReader(bytes.NewReader(newBytes))
 			if scanErr != nil {
 				return fmt.Errorf("secret scan: %w", scanErr)
 			}
@@ -376,11 +538,11 @@ func newAliasAddCmd() *cobra.Command {
 				return fmt.Errorf("pre-edit snapshot: %w", err)
 			}
 
-			if err := atomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
+			if err := atomicWrite(canonical, newBytes, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("write %s: %w", canonical, err)
 			}
 
-			sum := sha256.Sum256(newContent)
+			sum := sha256.Sum256(newBytes)
 			newHash := hex.EncodeToString(sum[:])
 
 			if _, err := s.DB().ExecContext(c.Context(),
@@ -388,26 +550,34 @@ func newAliasAddCmd() *cobra.Command {
 				return fmt.Errorf("update tracked_files: %w", err)
 			}
 
+			// `sub_action` is the user-intent path (append/replace/
+			// force-append). `block_action` is the block-level effect
+			// (created vs appended-into vs replaced). For --replace we always tag
+			// "replaced" rather than relying on the upsert helper's view,
+			// because the block-level outcome is conceptually a substitution
+			// even when the underlying mechanic was "create then insert".
+			if subAction == "replace" {
+				blockAction = "replaced"
+			}
+			groupLabel := groupFlag
+			if groupLabel == "" {
+				groupLabel = "aliases"
+			}
+
 			// Privacy: NEVER include the command body. Name + shell +
-			// counts + hashes only. `sub_action` discriminates which
-			// branch we took so audit consumers can distinguish replace
-			// vs append vs forced-duplicate at query time. (Top-level
-			// "action" is reserved by the audit logger for the event
-			// name "alias.add".)
+			// group + counts + hashes only.
 			fields := map[string]any{
 				"display_path": file.DisplayPath,
 				"file_id":      file.ID,
 				"snapshot_id":  snap.ID,
 				"alias_name":   name,
 				"shell":        family,
+				"group":        groupLabel,
 				"sub_action":   subAction,
+				"block_action": blockAction,
 				"old_hash":     file.LastHash,
 				"new_hash":     newHash,
-			}
-			if subAction == "replace" {
-				fields["bytes_delta"] = bytesDelta
-			} else {
-				fields["bytes_appended"] = len(appendBytes)
+				"bytes_delta":  bytesDelta,
 			}
 			audit.Log(c.Context(), "alias.add", fields)
 
@@ -425,6 +595,7 @@ func newAliasAddCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
 	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
+	cmd.Flags().StringVar(&groupFlag, "group", "", "place the alias inside the named shared block")
 	cmd.Flags().BoolVar(&force, "force", false, "add even if secrets are detected OR alias already exists")
 	cmd.Flags().BoolVar(&replace, "replace", false, "overwrite any existing definition of this alias")
 	return cmd
@@ -473,39 +644,15 @@ func newAliasRemoveCmd() *cobra.Command {
 				return fmt.Errorf("stat %s: %w", canonical, err)
 			}
 
-			// Two-phase removal: first strip any fenced dfm blocks for
-			// this alias (the modern form), then sweep any remaining
-			// legacy bare-line definitions. Both phases contribute to
-			// the audit count.
-			blockRe := aliasBlockRe(name)
-			blocksRemoved := len(blockRe.FindAllStringIndex(string(current), -1))
-			afterBlocks := blockRe.ReplaceAllString(string(current), "")
-
-			re := aliasMatchRe(family, name)
-
-			// We split deliberately on '\n' (not bufio.Scanner) so we
-			// preserve a trailing-newline-or-not distinction faithfully:
-			// strings.Split("a\nb\n", "\n") yields ["a","b",""], and
-			// joining the kept slice with "\n" reproduces the original
-			// terminator state when no lines are removed from the tail.
-			lines := strings.Split(afterBlocks, "\n")
-			kept := make([]string, 0, len(lines))
-			bareRemoved := 0
-			for _, ln := range lines {
-				if re.MatchString(ln) {
-					bareRemoved++
-					continue
-				}
-				kept = append(kept, ln)
-			}
-			removed := blocksRemoved + bareRemoved
+			stripped, rc := removeAliasEverywhere(family, name, string(current))
+			removed := rc.legacyBlocks + rc.sharedEvicted + rc.bareLines
 			if removed == 0 {
 				fmt.Fprintf(c.ErrOrStderr(),
 					"alias '%s' not found in %s\n", name, file.DisplayPath)
 				os.Exit(exitNotFound)
 			}
 
-			newContent := []byte(strings.Join(kept, "\n"))
+			newContent := []byte(stripped)
 
 			mgr, mgrErr := newSnapshotManager(c.Context(), s)
 			if mgrErr != nil {
@@ -528,23 +675,24 @@ func newAliasRemoveCmd() *cobra.Command {
 				return fmt.Errorf("update tracked_files: %w", err)
 			}
 
-			// `lines_removed` is the total count across both removal
-			// phases (fenced blocks counted as one removal each, plus
-			// any legacy bare lines). The phase breakdown is preserved
-			// as `blocks_removed` / `bare_lines_removed` for audit
-			// consumers that want to distinguish managed from legacy
-			// entries.
+			// `lines_removed` is the user-visible total. The breakdown
+			// fields let audit consumers tell where the entries came
+			// from: legacy per-alias blocks, evictions from shared
+			// blocks, stray bare lines, and how many shared blocks went
+			// empty as a side-effect.
 			audit.Log(c.Context(), "alias.remove", map[string]any{
-				"display_path":       file.DisplayPath,
-				"file_id":            file.ID,
-				"snapshot_id":        snap.ID,
-				"alias_name":         name,
-				"shell":              family,
-				"lines_removed":      removed,
-				"blocks_removed":     blocksRemoved,
-				"bare_lines_removed": bareRemoved,
-				"old_hash":           file.LastHash,
-				"new_hash":           newHash,
+				"display_path":           file.DisplayPath,
+				"file_id":                file.ID,
+				"snapshot_id":            snap.ID,
+				"alias_name":             name,
+				"shell":                  family,
+				"lines_removed":          removed,
+				"blocks_removed":         rc.legacyBlocks,
+				"bare_lines_removed":     rc.bareLines,
+				"shared_block_evictions": rc.sharedEvicted,
+				"empty_blocks_dropped":   rc.emptiedBlocks,
+				"old_hash":               file.LastHash,
+				"new_hash":               newHash,
 			})
 
 			fmt.Fprintf(c.OutOrStdout(),

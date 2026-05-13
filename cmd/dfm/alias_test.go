@@ -101,12 +101,12 @@ func TestAliasAdd_AppendsAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	// Fenced-block emission: header is preserved, the new managed alias
-	// arrives wrapped in dfm marker comments.
+	// Shared-block emission: header preserved; the new managed alias
+	// lands inside the default `dfm:aliases` block.
 	want := "# bashrc\n" +
-		"# >>> dfm:alias ll >>>\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias ll='ls -la'\n" +
-		"# <<< dfm:alias ll <<<\n"
+		"# <<< dfm:aliases <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
@@ -118,9 +118,14 @@ func TestAliasAdd_AppendsAndAudits(t *testing.T) {
 	if !strings.Contains(string(data), `"action":"alias.add"`) {
 		t.Errorf("missing alias.add event in audit log:\n%s", data)
 	}
-	// Per dfm-ap2: a no-conflict add is the "append" sub-action.
 	if !strings.Contains(string(data), `"sub_action":"append"`) {
-		t.Errorf("expected audit field action=append:\n%s", data)
+		t.Errorf("expected audit field sub_action=append:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"block_action":"created"`) {
+		t.Errorf("expected audit field block_action=created:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"group":"aliases"`) {
+		t.Errorf("expected audit field group=aliases:\n%s", data)
 	}
 	// Privacy invariant: command body must never appear in the log.
 	if strings.Contains(string(data), "ls -la") {
@@ -137,8 +142,6 @@ func TestAliasAdd_EmbeddedSingleQuote(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	// Caller passes the literal command string "echo 'hi'"; we expect
-	// the POSIX '\'' escape on the way out.
 	cmd.SetArgs([]string{"add", "--file", canonical, "g", "echo 'hi'"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v\nout: %s", err, out.String())
@@ -147,11 +150,9 @@ func TestAliasAdd_EmbeddedSingleQuote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	// The block wraps the same posix-escaped body the bare-line form
-	// would produce.
-	want := "# >>> dfm:alias g >>>\n" +
+	want := "# >>> dfm:aliases >>>\n" +
 		`alias g='echo '\''hi'\'''` + "\n" +
-		"# <<< dfm:alias g <<<\n"
+		"# <<< dfm:aliases <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
@@ -181,7 +182,6 @@ func TestAliasAdd_RejectsDuplicateByDefault(t *testing.T) {
 	initial := "alias cr='foo'\n"
 	canonical, _ := writeTracked(t, ctx, initial)
 
-	// Capture pre-state of audit log so we can confirm zero new rows.
 	preAudit, _ := os.ReadFile(logPath)
 
 	cmd := newAliasCmd()
@@ -231,17 +231,15 @@ func TestAliasAdd_ReplaceOverwritesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	// --replace on a legacy bare line migrates it to the fenced form
-	// at the same position. The block displaces the original line.
-	want := "# top\n" +
-		"# >>> dfm:alias cr >>>\n" +
+	// --replace strips every prior definition (here: one bare line) and
+	// inserts the new entry into the default shared block at EOF.
+	want := "# top\n# tail\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='bar'\n" +
-		"# <<< dfm:alias cr <<<\n" +
-		"# tail\n"
+		"# <<< dfm:aliases <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
-	// Verify exactly one alias cr line.
 	if n := strings.Count(string(got), "alias cr="); n != 1 {
 		t.Errorf("expected 1 alias cr= line, got %d in %q", n, got)
 	}
@@ -254,7 +252,10 @@ func TestAliasAdd_ReplaceOverwritesExisting(t *testing.T) {
 		t.Fatalf("read log: %v", err)
 	}
 	if !strings.Contains(string(data), `"sub_action":"replace"`) {
-		t.Errorf("missing action=replace in audit log:\n%s", data)
+		t.Errorf("missing sub_action=replace in audit log:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"block_action":"replaced"`) {
+		t.Errorf("missing block_action=replaced in audit log:\n%s", data)
 	}
 	if strings.Contains(string(data), `"bar"`) {
 		t.Errorf("command body leaked into audit log: %s", data)
@@ -280,9 +281,9 @@ func TestAliasAdd_ReplaceOnEmptyAppends(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	want := "# header\n" +
-		"# >>> dfm:alias cr >>>\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='bar'\n" +
-		"# <<< dfm:alias cr <<<\n"
+		"# <<< dfm:aliases <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
@@ -295,7 +296,7 @@ func TestAliasAdd_ReplaceOnEmptyAppends(t *testing.T) {
 		t.Fatalf("read log: %v", err)
 	}
 	if !strings.Contains(string(data), `"sub_action":"append"`) {
-		t.Errorf("missing action=append in audit log:\n%s", data)
+		t.Errorf("missing sub_action=append in audit log:\n%s", data)
 	}
 }
 
@@ -317,12 +318,12 @@ func TestAliasAdd_ForceAllowsDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	// --force appends a fresh fenced block on top of the existing
+	// --force appends a fresh default block on top of the existing
 	// legacy bare line without disturbing it.
 	want := "alias cr='foo'\n" +
-		"# >>> dfm:alias cr >>>\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='bar'\n" +
-		"# <<< dfm:alias cr <<<\n"
+		"# <<< dfm:aliases <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
@@ -338,7 +339,7 @@ func TestAliasAdd_ForceAllowsDuplicate(t *testing.T) {
 		t.Fatalf("read log: %v", err)
 	}
 	if !strings.Contains(string(data), `"sub_action":"force-append"`) {
-		t.Errorf("missing action=force-append in audit log:\n%s", data)
+		t.Errorf("missing sub_action=force-append in audit log:\n%s", data)
 	}
 }
 
@@ -397,14 +398,10 @@ func TestAliasAdd_ReplaceCollapsesPreexistingDuplicates(t *testing.T) {
 	if !strings.Contains(string(got), "alias cr='fresh'") {
 		t.Errorf("expected new value 'fresh', got %q", got)
 	}
-	// The single surviving definition should sit where the first match
-	// was (between "# top" and "middle"), not at the tail, and be
-	// wrapped in a fenced block.
-	want := "# top\n" +
-		"# >>> dfm:alias cr >>>\n" +
+	want := "# top\nmiddle\n# tail\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='fresh'\n" +
-		"# <<< dfm:alias cr <<<\n" +
-		"middle\n# tail\n"
+		"# <<< dfm:aliases <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
@@ -450,12 +447,6 @@ func TestAliasRemove_RemovesAllMatches(t *testing.T) {
 }
 
 func TestAliasRemove_NotFound(t *testing.T) {
-	// os.Exit on the not-found path would tear the test process down,
-	// so we exercise just enough plumbing to verify the matcher logic
-	// and then assert no mutation occurred via a fresh invocation that
-	// finds zero matches. We use a subprocess-free approach: pre-check
-	// the file contains no `alias missing` line, then verify the regex
-	// directly.
 	re := aliasMatchRe("posix", "missing")
 	if re.MatchString("alias foo='x'") {
 		t.Fatalf("regex matched wrong alias")
@@ -465,9 +456,9 @@ func TestAliasRemove_NotFound(t *testing.T) {
 	}
 }
 
-// TestAliasAdd_EmitsFencedBlock pins the exact bytes appended for a
-// fresh add: header preserved, body wrapped in dfm fence comments.
-func TestAliasAdd_EmitsFencedBlock(t *testing.T) {
+// TestAliasAdd_CreatesDefaultBlock — first `add` creates the `# >>> dfm:aliases >>>`
+// block with one entry.
+func TestAliasAdd_CreatesDefaultBlock(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	canonical, _ := writeTracked(t, ctx, "# bashrc\n")
 
@@ -481,30 +472,161 @@ func TestAliasAdd_EmitsFencedBlock(t *testing.T) {
 		t.Fatalf("execute: %v\nout: %s", err, out.String())
 	}
 
-	got, err := os.ReadFile(canonical)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	// Byte-equal assertion on the trailing region: the rc must end with
-	// the fenced block, with a single trailing newline after the close
-	// fence and no extra padding.
-	wantTail := "# >>> dfm:alias cr >>>\n" +
+	got, _ := os.ReadFile(canonical)
+	want := "# bashrc\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='claude --resume'\n" +
-		"# <<< dfm:alias cr <<<\n"
-	if !strings.HasSuffix(string(got), wantTail) {
-		t.Errorf("rc tail does not match fenced block.\nfull content: %q\nwant suffix:  %q", got, wantTail)
-	}
-	if string(got) != "# bashrc\n"+wantTail {
-		t.Errorf("full content mismatch.\n got: %q\nwant: %q", got, "# bashrc\n"+wantTail)
+		"# <<< dfm:aliases <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
 	}
 }
 
-// TestAliasAdd_DetectsLegacyBareLineAsDuplicate verifies that a hand-
-// written bare `alias` line still trips the duplicate check, even
-// though it isn't fenced.
-func TestAliasAdd_DetectsLegacyBareLineAsDuplicate(t *testing.T) {
+// TestAliasAdd_AppendsIntoExistingDefaultBlock — second `add` adds a body
+// line inside the existing block, not a new block.
+func TestAliasAdd_AppendsIntoExistingDefaultBlock(t *testing.T) {
+	ctx, _, logPath := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "# bashrc\n")
+
+	for _, args := range [][]string{
+		{"add", "--file", canonical, "cr", "claude --resume"},
+		{"add", "--file", canonical, "ll", "ls -lah"},
+	} {
+		cmd := newAliasCmd()
+		cmd.SetContext(ctx)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("execute %v: %v\nout: %s", args, err, out.String())
+		}
+	}
+
+	got, _ := os.ReadFile(canonical)
+	want := "# bashrc\n" +
+		"# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+	if n := strings.Count(string(got), "# >>> dfm:aliases >>>"); n != 1 {
+		t.Errorf("expected exactly 1 open fence, got %d", n)
+	}
+
+	data, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(data), `"block_action":"appended"`) {
+		t.Errorf("expected block_action=appended on second add:\n%s", data)
+	}
+}
+
+// TestAliasAdd_NamedGroupCreatesGroupBlock — `add --group terraform tf
+// "terraform"` creates the `# >>> dfm:group terraform >>>` block.
+func TestAliasAdd_NamedGroupCreatesGroupBlock(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
-	initial := "alias cr='foo'\n"
+	canonical, _ := writeTracked(t, ctx, "")
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--group", "terraform", "tf", "terraform"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, _ := os.ReadFile(canonical)
+	want := "# >>> dfm:group terraform >>>\n" +
+		"alias tf='terraform'\n" +
+		"# <<< dfm:group terraform <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+}
+
+// TestAliasAdd_NamedGroupAppendsIntoExistingGroupBlock — second
+// `add --group terraform` appends inside.
+func TestAliasAdd_NamedGroupAppendsIntoExistingGroupBlock(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "")
+
+	for _, args := range [][]string{
+		{"add", "--file", canonical, "--group", "terraform", "tf", "terraform"},
+		{"add", "--file", canonical, "--group", "terraform", "tfa", "terraform apply -auto-approve"},
+		{"add", "--file", canonical, "--group", "terraform", "tfplan", "terraform plan"},
+	} {
+		cmd := newAliasCmd()
+		cmd.SetContext(ctx)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("execute %v: %v\nout: %s", args, err, out.String())
+		}
+	}
+
+	got, _ := os.ReadFile(canonical)
+	want := "# >>> dfm:group terraform >>>\n" +
+		"alias tf='terraform'\n" +
+		"alias tfa='terraform apply -auto-approve'\n" +
+		"alias tfplan='terraform plan'\n" +
+		"# <<< dfm:group terraform <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+	if n := strings.Count(string(got), "# >>> dfm:group terraform >>>"); n != 1 {
+		t.Errorf("expected exactly 1 terraform fence, got %d", n)
+	}
+}
+
+// TestAliasAdd_DefaultAndGroupCoexist — adds without group and with
+// `--group` produce both blocks side by side.
+func TestAliasAdd_DefaultAndGroupCoexist(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "")
+
+	for _, args := range [][]string{
+		{"add", "--file", canonical, "cr", "claude --resume"},
+		{"add", "--file", canonical, "ll", "ls -lah"},
+		{"add", "--file", canonical, "--group", "terraform", "tf", "terraform"},
+		{"add", "--file", canonical, "--group", "terraform", "tfa", "terraform apply -auto-approve"},
+		{"add", "--file", canonical, "--group", "terraform", "tfplan", "terraform plan"},
+	} {
+		cmd := newAliasCmd()
+		cmd.SetContext(ctx)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("execute %v: %v\nout: %s", args, err, out.String())
+		}
+	}
+
+	got, _ := os.ReadFile(canonical)
+	want := "# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n" +
+		"# >>> dfm:group terraform >>>\n" +
+		"alias tf='terraform'\n" +
+		"alias tfa='terraform apply -auto-approve'\n" +
+		"alias tfplan='terraform plan'\n" +
+		"# <<< dfm:group terraform <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+}
+
+// TestAliasAdd_RejectsBadGroupName — `--group "has space"` exits
+// `exitResolveErr`, no mutation.
+func TestAliasAdd_RejectsBadGroupName(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	initial := ""
 	canonical, _ := writeTracked(t, ctx, initial)
 
 	cmd := newAliasCmd()
@@ -512,7 +634,36 @@ func TestAliasAdd_DetectsLegacyBareLineAsDuplicate(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"add", "--file", canonical, "cr", "bar"})
+	cmd.SetArgs([]string{"add", "--file", canonical, "--group", "has space", "tf", "terraform"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error for bad group name, got nil")
+	}
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != exitResolveErr {
+		t.Fatalf("want exitError(code=%d), got %v", exitResolveErr, err)
+	}
+	got, _ := os.ReadFile(canonical)
+	if string(got) != initial {
+		t.Errorf("file mutated on bad-group rejection: %q", got)
+	}
+}
+
+// TestAliasAdd_DetectsDupeAcrossBlocks — alias `cr` in default block;
+// `add cr ... --group foo` (no `--replace`) is rejected as duplicate.
+func TestAliasAdd_DetectsDupeAcrossBlocks(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	initial := "# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"# <<< dfm:aliases <<<\n"
+	canonical, _ := writeTracked(t, ctx, initial)
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--group", "foo", "cr", "other"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected duplicate-rejection error, got nil; out=%s", out.String())
@@ -523,61 +674,52 @@ func TestAliasAdd_DetectsLegacyBareLineAsDuplicate(t *testing.T) {
 	}
 	got, _ := os.ReadFile(canonical)
 	if string(got) != initial {
-		t.Errorf("file mutated on rejection: got %q want %q", got, initial)
+		t.Errorf("file mutated on cross-block dupe rejection: %q", got)
 	}
 }
 
-// TestAliasAdd_ReplaceMigratesLegacyToFenced confirms that --replace on
-// an existing bare-line definition rewrites it as a fenced block, with
-// no stray bare-line copy left behind.
-func TestAliasAdd_ReplaceMigratesLegacyToFenced(t *testing.T) {
-	ctx, _, logPath := setupEditCmdEnv(t)
-	canonical, _ := writeTracked(t, ctx, "alias cr='foo'\n")
+// TestAliasAdd_ReplaceMovesBetweenBlocks — alias `cr` in default block;
+// `add cr ... --group foo --replace` removes it from default block and
+// inserts it into the foo group.
+func TestAliasAdd_ReplaceMovesBetweenBlocks(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	initial := "# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n"
+	canonical, _ := writeTracked(t, ctx, initial)
 
 	cmd := newAliasCmd()
 	cmd.SetContext(ctx)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "cr", "bar"})
+	cmd.SetArgs([]string{"add", "--file", canonical, "--group", "anth", "--replace", "cr", "claude code"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v\nout: %s", err, out.String())
 	}
 
 	got, _ := os.ReadFile(canonical)
-	want := "# >>> dfm:alias cr >>>\n" +
-		"alias cr='bar'\n" +
-		"# <<< dfm:alias cr <<<\n"
+	want := "# >>> dfm:aliases >>>\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n" +
+		"# >>> dfm:group anth >>>\n" +
+		"alias cr='claude code'\n" +
+		"# <<< dfm:group anth <<<\n"
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
-	if n := strings.Count(string(got), "alias cr="); n != 1 {
-		t.Errorf("expected exactly one alias cr= line (the block body), got %d", n)
-	}
-	if !strings.Contains(string(got), "# >>> dfm:alias cr >>>") {
-		t.Errorf("missing open fence: %q", got)
-	}
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
-	if !strings.Contains(string(data), `"sub_action":"replace"`) {
-		t.Errorf("missing sub_action=replace in audit log:\n%s", data)
-	}
 }
 
-// TestAliasAdd_ReplaceCollapsesMixedLegacyAndFenced exercises the
-// rare-but-real case where a user hand-edited around an existing dfm
-// block, leaving both a fenced block and a stray bare line for the
-// same alias. --replace must collapse to exactly one fenced block.
-func TestAliasAdd_ReplaceCollapsesMixedLegacyAndFenced(t *testing.T) {
+// TestAliasAdd_ReplaceMigratesLegacyBlockToShared — pre-seed a legacy
+// `# >>> dfm:alias cr >>>` block; `add cr ... --replace` produces a
+// `# >>> dfm:aliases >>>` block containing the entry and no legacy block.
+func TestAliasAdd_ReplaceMigratesLegacyBlockToShared(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	initial := "# top\n" +
 		"# >>> dfm:alias cr >>>\n" +
 		"alias cr='old'\n" +
 		"# <<< dfm:alias cr <<<\n" +
-		"alias cr='hand'\n" +
 		"# tail\n"
 	canonical, _ := writeTracked(t, ctx, initial)
 
@@ -586,36 +728,99 @@ func TestAliasAdd_ReplaceCollapsesMixedLegacyAndFenced(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "cr", "fresh"})
+	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "cr", "claude --resume"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v\nout: %s", err, out.String())
 	}
 
 	got, _ := os.ReadFile(canonical)
-	// Exactly one fenced block, exactly one bare alias cr= line (the
-	// block body), no legacy stray.
-	if n := strings.Count(string(got), "# >>> dfm:alias cr >>>"); n != 1 {
-		t.Errorf("expected 1 open fence, got %d in %q", n, got)
+	want := "# top\n# tail\n" +
+		"# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"# <<< dfm:aliases <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
 	}
-	if n := strings.Count(string(got), "# <<< dfm:alias cr <<<"); n != 1 {
-		t.Errorf("expected 1 close fence, got %d in %q", n, got)
-	}
-	if n := strings.Count(string(got), "alias cr="); n != 1 {
-		t.Errorf("expected 1 alias cr= line, got %d in %q", n, got)
-	}
-	if !strings.Contains(string(got), "alias cr='fresh'") {
-		t.Errorf("expected new value 'fresh', got %q", got)
+	if strings.Contains(string(got), "dfm:alias cr") {
+		t.Errorf("legacy fence not migrated, still present: %q", got)
 	}
 }
 
-// TestAliasRemove_StripsFencedBlock pins block-aware removal: after
-// remove, the rc retains no trace of the fence lines or the body.
-func TestAliasRemove_StripsFencedBlock(t *testing.T) {
+// TestAliasAdd_ForceAppendsDuplicateInTargetBlock — pre-seed default
+// block with one `cr`; `add cr ... --force` results in two `alias cr=`
+// lines inside the same default block.
+func TestAliasAdd_ForceAppendsDuplicateInTargetBlock(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	initial := "# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"# <<< dfm:aliases <<<\n"
+	canonical, _ := writeTracked(t, ctx, initial)
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--force", "cr", "claude code"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, _ := os.ReadFile(canonical)
+	want := "# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"alias cr='claude code'\n" +
+		"# <<< dfm:aliases <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+}
+
+// TestAliasRemove_DropsLineFromDefaultBlock — multi-entry default block,
+// remove one entry, block survives with the others.
+func TestAliasRemove_DropsLineFromDefaultBlock(t *testing.T) {
+	ctx, _, logPath := setupEditCmdEnv(t)
+	initial := "# >>> dfm:aliases >>>\n" +
+		"alias cr='claude --resume'\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n"
+	canonical, _ := writeTracked(t, ctx, initial)
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"remove", "--file", canonical, "cr"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, _ := os.ReadFile(canonical)
+	want := "# >>> dfm:aliases >>>\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+
+	data, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(data), `"shared_block_evictions":1`) {
+		t.Errorf("expected shared_block_evictions=1 in audit:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"empty_blocks_dropped":0`) {
+		t.Errorf("expected empty_blocks_dropped=0 in audit:\n%s", data)
+	}
+}
+
+// TestAliasRemove_DropsEmptyBlockWhenLastEntryLeaves — single-entry
+// default block, remove the entry, entire block (fences included) is gone.
+func TestAliasRemove_DropsEmptyBlockWhenLastEntryLeaves(t *testing.T) {
 	ctx, _, logPath := setupEditCmdEnv(t)
 	initial := "# top\n" +
-		"# >>> dfm:alias cr >>>\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='claude --resume'\n" +
-		"# <<< dfm:alias cr <<<\n" +
+		"# <<< dfm:aliases <<<\n" +
 		"# tail\n"
 	canonical, _ := writeTracked(t, ctx, initial)
 
@@ -634,29 +839,31 @@ func TestAliasRemove_StripsFencedBlock(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}
-	for _, forbidden := range []string{"dfm:alias cr", "alias cr=", "claude --resume"} {
+	for _, forbidden := range []string{"dfm:aliases", "alias cr=", "claude --resume"} {
 		if strings.Contains(string(got), forbidden) {
 			t.Errorf("expected %q to be gone, still present in %q", forbidden, got)
 		}
 	}
 
 	data, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(data), `"blocks_removed":1`) {
-		t.Errorf("expected blocks_removed=1 in audit:\n%s", data)
+	if !strings.Contains(string(data), `"empty_blocks_dropped":1`) {
+		t.Errorf("expected empty_blocks_dropped=1 in audit:\n%s", data)
 	}
 }
 
-// TestAliasRemove_StripsMixedLegacyAndFenced confirms the two-phase
-// removal handles a mix of fenced and bare definitions in one pass,
-// and reports counts from both phases in the audit event.
-func TestAliasRemove_StripsMixedLegacyAndFenced(t *testing.T) {
+// TestAliasRemove_StripsAcrossLegacyAndShared — mixed input (legacy
+// block + entry in default block + bare line) all removed in one pass.
+func TestAliasRemove_StripsAcrossLegacyAndShared(t *testing.T) {
 	ctx, _, logPath := setupEditCmdEnv(t)
 	initial := "alias cr='legacy'\n" +
 		"keep me\n" +
 		"# >>> dfm:alias cr >>>\n" +
-		"alias cr='managed'\n" +
+		"alias cr='legacy-block'\n" +
 		"# <<< dfm:alias cr <<<\n" +
-		"alias cr='another legacy'\n"
+		"# >>> dfm:aliases >>>\n" +
+		"alias cr='managed'\n" +
+		"alias ll='ls -lah'\n" +
+		"# <<< dfm:aliases <<<\n"
 	canonical, _ := writeTracked(t, ctx, initial)
 
 	cmd := newAliasCmd()
@@ -674,7 +881,10 @@ func TestAliasRemove_StripsMixedLegacyAndFenced(t *testing.T) {
 		t.Errorf("expected all alias cr= lines gone, got %q", got)
 	}
 	if strings.Contains(string(got), "dfm:alias cr") {
-		t.Errorf("expected fence lines gone, got %q", got)
+		t.Errorf("expected legacy fence gone, got %q", got)
+	}
+	if !strings.Contains(string(got), "alias ll='ls -lah'") {
+		t.Errorf("unrelated shared-block entry was lost: %q", got)
 	}
 	if !strings.Contains(string(got), "keep me") {
 		t.Errorf("unrelated content was removed: %q", got)
@@ -684,24 +894,29 @@ func TestAliasRemove_StripsMixedLegacyAndFenced(t *testing.T) {
 	if !strings.Contains(string(data), `"blocks_removed":1`) {
 		t.Errorf("expected blocks_removed=1 in audit:\n%s", data)
 	}
-	if !strings.Contains(string(data), `"bare_lines_removed":2`) {
-		t.Errorf("expected bare_lines_removed=2 in audit:\n%s", data)
+	if !strings.Contains(string(data), `"shared_block_evictions":1`) {
+		t.Errorf("expected shared_block_evictions=1 in audit:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"bare_lines_removed":1`) {
+		t.Errorf("expected bare_lines_removed=1 in audit:\n%s", data)
 	}
 	if !strings.Contains(string(data), `"lines_removed":3`) {
 		t.Errorf("expected lines_removed=3 in audit:\n%s", data)
 	}
 }
 
-// TestAliasList_ParsesFencedEntries verifies that the existing per-line
-// list parser picks up the bare `alias` line inside a fenced block.
-// The fence lines themselves start with `#` and don't match the alias
-// regex, so no list-side changes were needed.
-func TestAliasList_ParsesFencedEntries(t *testing.T) {
+// TestAliasList_ParsesEntriesFromBothBlockKinds — `list` reports entries
+// from the default block and named groups.
+func TestAliasList_ParsesEntriesFromBothBlockKinds(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	contents := "# header\n" +
-		"# >>> dfm:alias cr >>>\n" +
+		"# >>> dfm:aliases >>>\n" +
 		"alias cr='claude --resume'\n" +
-		"# <<< dfm:alias cr <<<\n"
+		"# <<< dfm:aliases <<<\n" +
+		"# >>> dfm:group terraform >>>\n" +
+		"alias tf='terraform'\n" +
+		"alias tfplan='terraform plan'\n" +
+		"# <<< dfm:group terraform <<<\n"
 	canonical, _ := writeTracked(t, ctx, contents)
 
 	cmd := newAliasCmd()
@@ -714,14 +929,12 @@ func TestAliasList_ParsesFencedEntries(t *testing.T) {
 		t.Fatalf("execute: %v\nout: %s", err, out.String())
 	}
 	o := out.String()
-	for _, want := range []string{"cr", "claude --resume"} {
+	for _, want := range []string{"cr", "claude --resume", "tf", "terraform", "tfplan", "terraform plan"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("list output missing %q\nfull output:\n%s", want, o)
 		}
 	}
-	// The fence comment lines should not show up as parsed aliases —
-	// they begin with `#`, not `alias`.
-	if strings.Contains(o, ">>> dfm:alias") || strings.Contains(o, "<<< dfm:alias") {
+	if strings.Contains(o, ">>> dfm:") || strings.Contains(o, "<<< dfm:") {
 		t.Errorf("fence lines leaked into list output:\n%s", o)
 	}
 }
