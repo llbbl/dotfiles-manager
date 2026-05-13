@@ -143,6 +143,7 @@ func newAliasAddCmd() *cobra.Command {
 		shellFlag string
 		fileFlag  string
 		force     bool
+		replace   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name> <command>",
@@ -156,6 +157,10 @@ func newAliasAddCmd() *cobra.Command {
 			}
 			if command == "" {
 				return exitf(exitResolveErr, "alias command must not be empty")
+			}
+			if replace && force {
+				return exitf(exitResolveErr,
+					"--replace and --force are mutually exclusive")
 			}
 
 			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
@@ -187,7 +192,75 @@ func newAliasAddCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("stat %s: %w", canonical, err)
 			}
-			newContent := append(append([]byte{}, current...), appendBytes...)
+
+			// Detect any existing definition(s) of this alias so we can
+			// reject duplicate adds by default, swap them under --replace,
+			// or stack them under --force.
+			matchRe := aliasMatchRe(family, name)
+			existingMatches := 0
+			// We split on '\n' (not bufio.Scanner) so a final empty
+			// element preserves whether the file ended with a newline,
+			// which we faithfully reproduce on rewrite.
+			currentLines := strings.Split(string(current), "\n")
+			for _, ln := range currentLines {
+				if matchRe.MatchString(ln) {
+					existingMatches++
+				}
+			}
+
+			// Default path (no --replace, no --force): refuse to add a
+			// duplicate. No snapshot, no audit, no mutation — pure no-op
+			// rejection so scripted callers can detect & branch cleanly.
+			if existingMatches > 0 && !replace && !force {
+				return exitf(exitAlreadyOrMiss,
+					"alias '%s' already defined in %s (use --replace to overwrite, --force to append duplicate)",
+					name, file.DisplayPath)
+			}
+
+			// Build newContent + decide the audit action discriminator.
+			// Three branches:
+			//   - replace with existing matches: substitute first match,
+			//     drop the rest, keep everything else verbatim.
+			//   - replace with no existing matches: behave like append
+			//     (idempotent for scripts).
+			//   - append (default or --force): append verbatim.
+			var newContent []byte
+			// "sub_action" not "action": the audit logger reserves the
+			// top-level "action" key for the event name (e.g. "alias.add")
+			// and overwrites any caller-supplied value, so we use
+			// sub_action as the within-event discriminator.
+			subAction := "append"
+			bytesDelta := 0
+			if replace && existingMatches > 0 {
+				rewritten := make([]string, 0, len(currentLines))
+				substituted := false
+				// buildAliasLine includes a trailing '\n'; when we splice
+				// it into the line-split array we want the line WITHOUT
+				// the terminator so Join("\n") reintroduces exactly one.
+				newLineNoNL := strings.TrimSuffix(line, "\n")
+				for _, ln := range currentLines {
+					if matchRe.MatchString(ln) {
+						if !substituted {
+							rewritten = append(rewritten, newLineNoNL)
+							substituted = true
+						}
+						// drop any additional matches (collapses
+						// pre-existing duplicates to a single line)
+						continue
+					}
+					rewritten = append(rewritten, ln)
+				}
+				newContent = []byte(strings.Join(rewritten, "\n"))
+				subAction = "replace"
+				bytesDelta = len(newContent) - len(current)
+			} else {
+				// append path (covers: no matches at all, --replace with
+				// nothing to replace, and --force on top of existing)
+				newContent = append(append([]byte{}, current...), appendBytes...)
+				if force && existingMatches > 0 {
+					subAction = "force-append"
+				}
+			}
 
 			// Same secrets pre-flight as `append`: scan the full new
 			// content so a credential can't be smuggled in via an alias
@@ -237,25 +310,44 @@ func newAliasAddCmd() *cobra.Command {
 			}
 
 			// Privacy: NEVER include the command body. Name + shell +
-			// counts + hashes only.
-			audit.Log(c.Context(), "alias.add", map[string]any{
-				"display_path":   file.DisplayPath,
-				"file_id":        file.ID,
-				"snapshot_id":    snap.ID,
-				"alias_name":     name,
-				"shell":          family,
-				"bytes_appended": len(appendBytes),
-				"old_hash":       file.LastHash,
-				"new_hash":       newHash,
-			})
+			// counts + hashes only. `sub_action` discriminates which
+			// branch we took so audit consumers can distinguish replace
+			// vs append vs forced-duplicate at query time. (Top-level
+			// "action" is reserved by the audit logger for the event
+			// name "alias.add".)
+			fields := map[string]any{
+				"display_path": file.DisplayPath,
+				"file_id":      file.ID,
+				"snapshot_id":  snap.ID,
+				"alias_name":   name,
+				"shell":        family,
+				"sub_action":   subAction,
+				"old_hash":     file.LastHash,
+				"new_hash":     newHash,
+			}
+			if subAction == "replace" {
+				fields["bytes_delta"] = bytesDelta
+			} else {
+				fields["bytes_appended"] = len(appendBytes)
+			}
+			audit.Log(c.Context(), "alias.add", fields)
 
-			fmt.Fprintf(c.OutOrStdout(), "added alias '%s' to %s\n", name, file.DisplayPath)
+			switch subAction {
+			case "replace":
+				fmt.Fprintf(c.OutOrStdout(), "replaced alias '%s' in %s\n", name, file.DisplayPath)
+			case "force-append":
+				fmt.Fprintf(c.OutOrStdout(),
+					"appended duplicate alias '%s' to %s (forced)\n", name, file.DisplayPath)
+			default:
+				fmt.Fprintf(c.OutOrStdout(), "added alias '%s' to %s\n", name, file.DisplayPath)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
 	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
-	cmd.Flags().BoolVar(&force, "force", false, "add even if secrets are detected")
+	cmd.Flags().BoolVar(&force, "force", false, "add even if secrets are detected OR alias already exists")
+	cmd.Flags().BoolVar(&replace, "replace", false, "overwrite any existing definition of this alias")
 	return cmd
 }
 
@@ -421,7 +513,7 @@ func newAliasListCmd() *cobra.Command {
 
 			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "NAME\tCOMMAND\tFILE")
-			for _, ln := range strings.Split(string(data), "\n") {
+			for ln := range strings.SplitSeq(string(data), "\n") {
 				m := re.FindStringSubmatch(ln)
 				if m == nil {
 					continue

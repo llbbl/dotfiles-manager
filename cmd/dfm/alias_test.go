@@ -113,6 +113,10 @@ func TestAliasAdd_AppendsAndAudits(t *testing.T) {
 	if !strings.Contains(string(data), `"action":"alias.add"`) {
 		t.Errorf("missing alias.add event in audit log:\n%s", data)
 	}
+	// Per dfm-ap2: a no-conflict add is the "append" sub-action.
+	if !strings.Contains(string(data), `"sub_action":"append"`) {
+		t.Errorf("expected audit field action=append:\n%s", data)
+	}
 	// Privacy invariant: command body must never appear in the log.
 	if strings.Contains(string(data), "ls -la") {
 		t.Errorf("alias command body leaked into audit log: %s", data)
@@ -160,6 +164,221 @@ func TestAliasAdd_InvalidName(t *testing.T) {
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != exitResolveErr {
 		t.Fatalf("want exitError(code=%d), got %v", exitResolveErr, err)
+	}
+}
+
+func TestAliasAdd_RejectsDuplicateByDefault(t *testing.T) {
+	ctx, _, logPath := setupEditCmdEnv(t)
+	initial := "alias cr='foo'\n"
+	canonical, _ := writeTracked(t, ctx, initial)
+
+	// Capture pre-state of audit log so we can confirm zero new rows.
+	preAudit, _ := os.ReadFile(logPath)
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "cr", "bar"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected duplicate-rejection error, got nil; out=%s", out.String())
+	}
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != exitAlreadyOrMiss {
+		t.Fatalf("want exitError(code=%d), got %v", exitAlreadyOrMiss, err)
+	}
+
+	got, rerr := os.ReadFile(canonical)
+	if rerr != nil {
+		t.Fatalf("read: %v", rerr)
+	}
+	if string(got) != initial {
+		t.Errorf("file mutated on rejection: got %q want %q", got, initial)
+	}
+
+	postAudit, _ := os.ReadFile(logPath)
+	if !bytes.Equal(preAudit, postAudit) {
+		t.Errorf("audit log mutated on rejection:\nbefore: %s\nafter:  %s", preAudit, postAudit)
+	}
+}
+
+func TestAliasAdd_ReplaceOverwritesExisting(t *testing.T) {
+	ctx, _, logPath := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "# top\nalias cr='foo'\n# tail\n")
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "cr", "bar"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "# top\nalias cr='bar'\n# tail\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+	// Verify exactly one alias cr line.
+	if n := strings.Count(string(got), "alias cr="); n != 1 {
+		t.Errorf("expected 1 alias cr= line, got %d in %q", n, got)
+	}
+	if !strings.Contains(out.String(), "replaced alias 'cr'") {
+		t.Errorf("stdout should say replaced, got %q", out.String())
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), `"sub_action":"replace"`) {
+		t.Errorf("missing action=replace in audit log:\n%s", data)
+	}
+	if strings.Contains(string(data), `"bar"`) {
+		t.Errorf("command body leaked into audit log: %s", data)
+	}
+}
+
+func TestAliasAdd_ReplaceOnEmptyAppends(t *testing.T) {
+	ctx, _, logPath := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "# header\n")
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "cr", "bar"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "# header\nalias cr='bar'\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+	if !strings.Contains(out.String(), "added alias 'cr'") {
+		t.Errorf("stdout should say added (append path), got %q", out.String())
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), `"sub_action":"append"`) {
+		t.Errorf("missing action=append in audit log:\n%s", data)
+	}
+}
+
+func TestAliasAdd_ForceAllowsDuplicate(t *testing.T) {
+	ctx, _, logPath := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "alias cr='foo'\n")
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--force", "cr", "bar"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "alias cr='foo'\nalias cr='bar'\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+	if n := strings.Count(string(got), "alias cr="); n != 2 {
+		t.Errorf("expected 2 alias cr= lines, got %d", n)
+	}
+	if !strings.Contains(out.String(), "appended duplicate alias 'cr'") {
+		t.Errorf("stdout should mention forced duplicate, got %q", out.String())
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), `"sub_action":"force-append"`) {
+		t.Errorf("missing action=force-append in audit log:\n%s", data)
+	}
+}
+
+func TestAliasAdd_ReplaceAndForceMutuallyExclusive(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	initial := "alias cr='foo'\n"
+	canonical, _ := writeTracked(t, ctx, initial)
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "--force", "cr", "bar"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error for --replace + --force, got nil")
+	}
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != exitResolveErr {
+		t.Fatalf("want exitError(code=%d), got %v", exitResolveErr, err)
+	}
+
+	got, rerr := os.ReadFile(canonical)
+	if rerr != nil {
+		t.Fatalf("read: %v", rerr)
+	}
+	if string(got) != initial {
+		t.Errorf("file mutated on flag-conflict error: got %q want %q", got, initial)
+	}
+}
+
+func TestAliasAdd_ReplaceCollapsesPreexistingDuplicates(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	// Simulate a user who got bitten by the pre-fix duplicate-append bug.
+	initial := "# top\nalias cr='one'\nmiddle\nalias cr='two'\n# tail\n"
+	canonical, _ := writeTracked(t, ctx, initial)
+
+	cmd := newAliasCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"add", "--file", canonical, "--replace", "cr", "fresh"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+
+	got, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if n := strings.Count(string(got), "alias cr="); n != 1 {
+		t.Errorf("expected duplicates collapsed to 1 line, got %d in %q", n, got)
+	}
+	if !strings.Contains(string(got), "alias cr='fresh'") {
+		t.Errorf("expected new value 'fresh', got %q", got)
+	}
+	// The single surviving definition should sit where the first match
+	// was (between "# top" and "middle"), not at the tail.
+	want := "# top\nalias cr='fresh'\nmiddle\n# tail\n"
+	if string(got) != want {
+		t.Errorf("content = %q, want %q", got, want)
 	}
 }
 
