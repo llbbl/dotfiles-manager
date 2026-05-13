@@ -43,28 +43,28 @@ Everything is read from process environment, so it composes with any secret-inje
 |---|---|---|
 | `TURSO_DATABASE_URL` | Remote libSQL/Turso URL for the state store. Overrides `[state].url` in `config.toml` when set. Unset = use the embedded file default. | unset |
 | `TURSO_AUTH_TOKEN` | Auth token for the remote Turso DB. Overrides `[state].auth_token` when set. | unset |
-| `DOTFILES_LOG_BACKEND` | Audit-log destination: `both` (JSONL + libSQL), `jsonl`, `db`, or `none`. | `both` |
-| `DOTFILES_LOG_LEVEL` | Debug logger level: `debug`, `info`, `warn`, `error`, or `off`. Distinct from the audit log. | `off` |
-| `DOTFILES_LOG_DEST` | Debug logger destination: `stderr`, `stdout`, or `file:/absolute/path`. | `stderr` |
-| `DOTFILES_LOG_FORMAT` | Debug logger format: `text` or `json`. | `text` |
+| `DFM_LOG_BACKEND` | Audit-log destination: `both` (JSONL + libSQL), `jsonl`, `db`, or `none`. | `both` |
+| `DFM_LOG_LEVEL` | Debug logger level: `debug`, `info`, `warn`, `error`, or `off`. Distinct from the audit log. | `off` |
+| `DFM_LOG_DEST` | Debug logger destination: `stderr`, `stdout`, or `file:/absolute/path`. | `stderr` |
+| `DFM_LOG_FORMAT` | Debug logger format: `text` or `json`. | `text` |
 
 Two distinct logging concerns to keep in mind:
 
 - **Audit log** records user-visible events (`track`, `sync`, `apply`, …) to JSONL + libSQL. Always on; backend selectable. See [Architecture](./architecture.md).
-- **Debug log** records internal flow traces for developers. Off by default; opt in with `DOTFILES_LOG_LEVEL`.
+- **Debug log** records internal flow traces for developers. Off by default; opt in with `DFM_LOG_LEVEL`.
 
 To enable rich debug output during local work:
 
 ```sh
-DOTFILES_LOG_LEVEL=debug DOTFILES_LOG_FORMAT=json just dev list
+DFM_LOG_LEVEL=debug DFM_LOG_FORMAT=json just dev list
 ```
 
 Or write to a file and tail it in another terminal:
 
 ```sh
-DOTFILES_LOG_LEVEL=debug \
-  DOTFILES_LOG_FORMAT=json \
-  DOTFILES_LOG_DEST=file:/tmp/dfm-dlog.jsonl \
+DFM_LOG_LEVEL=debug \
+  DFM_LOG_FORMAT=json \
+  DFM_LOG_DEST=file:/tmp/dfm-dlog.jsonl \
   just dev sync
 ```
 
