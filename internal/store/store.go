@@ -24,6 +24,9 @@ import (
 type Store struct {
 	db     *sql.DB
 	target string
+	// shared marks this Store as a non-owning reference: Close is a
+	// no-op. See SharedRef.
+	shared bool
 }
 
 // DB returns the underlying *sql.DB.
@@ -33,8 +36,24 @@ func (s *Store) DB() *sql.DB     { return s.db }
 // local path or a remote URL).
 func (s *Store) Target() string  { return s.target }
 
-// Close closes the underlying *sql.DB.
-func (s *Store) Close() error    { return s.db.Close() }
+// Close closes the underlying *sql.DB. If this Store is a shared
+// reference (constructed via SharedRef), Close is a no-op — the
+// original owner is responsible for the underlying connection.
+func (s *Store) Close() error {
+	if s.shared {
+		return nil
+	}
+	return s.db.Close()
+}
+
+// SharedRef returns a non-owning view of this Store. Callers can
+// safely Close() the returned reference without closing the
+// underlying *sql.DB; the original Store retains ownership. Used by
+// the root cobra command to share its store with subcommands so we
+// only open the DB (and run migrations) once per process.
+func (s *Store) SharedRef() *Store {
+	return &Store{db: s.db, target: s.target, shared: true}
+}
 
 // New opens the state DB, pings it, and runs pending migrations.
 func New(ctx context.Context, cfg *config.Config) (*Store, error) {

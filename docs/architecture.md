@@ -39,7 +39,7 @@ Tables today:
 - `actions` — the audit-log mirror (see below).
 - `snapshots` — metadata for the on-disk snapshot store.
 
-`internal/config` loads `~/.config/dotfiles/config.toml`, applies env overrides (notably `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `DOTFILES_LOG_*`), and exposes the result via context to every command.
+`internal/config` loads `~/.config/dotfiles/config.toml`, applies env overrides (notably `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `DFM_LOG_*`), and exposes the result via context to every command.
 
 ## Tracker: `internal/tracker`
 
@@ -106,13 +106,13 @@ The audit log records *user-visible* events — anything a user might want to lo
 - `db` — table only.
 - `none` — disabled.
 
-`DOTFILES_LOG_BACKEND` overrides the TOML value. The backup repo's own `logs/actions.jsonl` is written by `dfm sync` unconditionally — that file is the committed durable trail and is independent of the local-log backend choice.
+`DFM_LOG_BACKEND` overrides the TOML value. The backup repo's own `logs/actions.jsonl` is written by `dfm sync` unconditionally — that file is the committed durable trail and is independent of the local-log backend choice.
 
 Records always carry typed attributes (suggestion id, file id, display path, snapshot id, hashes, durations, exit codes). Diff bodies, prompt bodies, response bodies, and file contents never appear.
 
 ## Debug log: `internal/dlog`
 
-Separate from the audit log. The debug log is for developers tracing internal flow when something breaks. It uses `log/slog` and is off by default — shipped binaries are silent unless an operator opts in via `DOTFILES_LOG_LEVEL`. See [Development > Environment variables](./development.md#environment-variables) for the knobs.
+Separate from the audit log. The debug log is for developers tracing internal flow when something breaks. It uses `log/slog` and is off by default — shipped binaries are silent unless an operator opts in via `DFM_LOG_LEVEL`. See [Development > Environment variables](./development.md#environment-variables) for the knobs.
 
 ## Sortable IDs: `internal/ids`
 

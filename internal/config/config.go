@@ -1,7 +1,7 @@
 // Package config loads, validates, and persists the TOML configuration
 // that drives every other subsystem. Load merges Defaults with the file
 // at the given path, expands "~/" prefixes, and overlays a small set of
-// environment variables (TURSO_*, DOTFILES_LOG_BACKEND). The resulting
+// environment variables (TURSO_*, DFM_LOG_BACKEND). The resulting
 // *Config can be attached to a context via WithContext / FromContext.
 package config
 
@@ -175,7 +175,7 @@ func Defaults() *Config {
 
 // Load reads a TOML config from path on top of Defaults, expands "~/"
 // prefixes, and applies the TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, and
-// DOTFILES_LOG_BACKEND environment overrides. A missing file is not an
+// DFM_LOG_BACKEND environment overrides. A missing file is not an
 // error; Defaults are returned. An empty path skips file decoding.
 func Load(path string) (*Config, error) {
 	cfg := Defaults()
@@ -200,7 +200,7 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("TURSO_AUTH_TOKEN"); v != "" {
 		cfg.State.AuthToken = v
 	}
-	if v := os.Getenv("DOTFILES_LOG_BACKEND"); v != "" {
+	if v := os.Getenv("DFM_LOG_BACKEND"); v != "" {
 		cfg.Log.Backend = strings.ToLower(v)
 	}
 	if cfg.Log.Backend == "" {

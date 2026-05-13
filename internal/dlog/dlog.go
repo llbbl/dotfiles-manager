@@ -16,9 +16,9 @@ import (
 
 // Environment variable names honored by New.
 const (
-	EnvLevel  = "DOTFILES_LOG_LEVEL"
-	EnvDest   = "DOTFILES_LOG_DEST"
-	EnvFormat = "DOTFILES_LOG_FORMAT"
+	EnvLevel  = "DFM_LOG_LEVEL"
+	EnvDest   = "DFM_LOG_DEST"
+	EnvFormat = "DFM_LOG_FORMAT"
 )
 
 // Discard is the no-op logger returned when level is "off". Useful as a
@@ -51,25 +51,34 @@ type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
 
-// New constructs a logger from environment variables, defaulting to a
-// silent logger when DOTFILES_LOG_LEVEL is "off" or unset. Honors:
+// New constructs a logger at the requested level, defaulting to a
+// silent logger when the resolved level is "off" or unset. If level is
+// the empty string, DFM_LOG_LEVEL is consulted; if that is also empty,
+// the level defaults to "off". DEST/FORMAT routing is always read from
+// the environment. Honors:
 //
-//	DOTFILES_LOG_LEVEL  = debug | info | warn | error | off  (default: off)
-//	DOTFILES_LOG_DEST   = stderr | stdout | file:/absolute/path  (default: stderr)
-//	DOTFILES_LOG_FORMAT = text | json  (default: text)
+//	level argument (or DFM_LOG_LEVEL) = debug | info | warn | error | off  (default: off)
+//	DFM_LOG_DEST   = stderr | stdout | file:/absolute/path  (default: stderr)
+//	DFM_LOG_FORMAT = text | json  (default: text)
 //
 // Unknown values fall back to defaults and emit a single warn-level
 // message to stderr describing the fallback (not the offending value).
-func New() (*slog.Logger, io.Closer, error) {
-	levelRaw := strings.ToLower(strings.TrimSpace(os.Getenv(EnvLevel)))
+//
+// New does not mutate the process environment, so concurrent callers
+// are safe.
+func New(level string) (*slog.Logger, io.Closer, error) {
+	levelRaw := strings.ToLower(strings.TrimSpace(level))
+	if levelRaw == "" {
+		levelRaw = strings.ToLower(strings.TrimSpace(os.Getenv(EnvLevel)))
+	}
 	if levelRaw == "" {
 		levelRaw = "off"
 	}
 
-	level, levelOK := parseLevel(levelRaw)
+	parsed, levelOK := parseLevel(levelRaw)
 	if !levelOK {
-		fmt.Fprintln(os.Stderr, "dlog: unknown DOTFILES_LOG_LEVEL; falling back to default")
-		level, _ = parseLevel("off")
+		fmt.Fprintln(os.Stderr, "dlog: unknown "+EnvLevel+"; falling back to default")
+		parsed, _ = parseLevel("off")
 		levelRaw = "off"
 	}
 
@@ -82,7 +91,7 @@ func New() (*slog.Logger, io.Closer, error) {
 		formatRaw = "text"
 	}
 	if formatRaw != "text" && formatRaw != "json" {
-		fmt.Fprintln(os.Stderr, "dlog: unknown DOTFILES_LOG_FORMAT; falling back to default")
+		fmt.Fprintln(os.Stderr, "dlog: unknown "+EnvFormat+"; falling back to default")
 		formatRaw = "text"
 	}
 
@@ -104,12 +113,12 @@ func New() (*slog.Logger, io.Closer, error) {
 		path := strings.TrimPrefix(destRaw, "file:")
 		expanded, err := expandHome(path)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "dlog: cannot resolve DOTFILES_LOG_DEST path; falling back to default")
+			fmt.Fprintln(os.Stderr, "dlog: cannot resolve "+EnvDest+" path; falling back to default")
 			w = os.Stderr
 			break
 		}
 		if !filepath.IsAbs(expanded) {
-			fmt.Fprintln(os.Stderr, "dlog: DOTFILES_LOG_DEST file path must be absolute; falling back to default")
+			fmt.Fprintln(os.Stderr, "dlog: "+EnvDest+" file path must be absolute; falling back to default")
 			w = os.Stderr
 			break
 		}
@@ -120,11 +129,11 @@ func New() (*slog.Logger, io.Closer, error) {
 		w = f
 		closer = f
 	default:
-		fmt.Fprintln(os.Stderr, "dlog: unknown DOTFILES_LOG_DEST; falling back to default")
+		fmt.Fprintln(os.Stderr, "dlog: unknown "+EnvDest+"; falling back to default")
 		w = os.Stderr
 	}
 
-	opts := &slog.HandlerOptions{Level: level, AddSource: false}
+	opts := &slog.HandlerOptions{Level: parsed, AddSource: false}
 	var h slog.Handler
 	if formatRaw == "json" {
 		h = slog.NewJSONHandler(w, opts)

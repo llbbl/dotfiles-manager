@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
@@ -17,6 +18,37 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/spf13/cobra"
 )
+
+// envLogLevel is the user-facing env var for adjusting the dlog level.
+// Matches dlog.EnvLevel; declared here so cmd/dfm doesn't have to import
+// the constant just to format error messages about it.
+const envLogLevel = "DFM_LOG_LEVEL"
+
+// resolveLogLevel applies the DFM_LOG_LEVEL precedence chain:
+//
+//  1. --verbose flag (forces debug)
+//  2. DFM_LOG_LEVEL env var
+//  3. default: error
+//
+// Returns the resolved level string (one of debug/info/warn/error) or
+// an exitError(exitResolveErr) if the env var holds an unrecognized
+// value.
+func resolveLogLevel(verbose bool, env string) (string, error) {
+	if verbose {
+		return "debug", nil
+	}
+	raw := strings.ToLower(strings.TrimSpace(env))
+	if raw == "" {
+		return "error", nil
+	}
+	switch raw {
+	case "debug", "info", "warn", "error":
+		return raw, nil
+	}
+	return "", exitf(exitResolveErr,
+		"invalid %s=%q (must be one of: debug, info, warn, error)",
+		envLogLevel, env)
+}
 
 
 // Populated at build time via -ldflags (see .goreleaser.yaml).
@@ -72,7 +104,11 @@ func newRootCmd() *cobra.Command {
 			"to suggest improvements as reviewable patches.",
 		SilenceUsage: true,
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
-			dl, dlcloser, dlerr := dlog.New()
+			level, err := resolveLogLevel(flagVerbose, os.Getenv(envLogLevel))
+			if err != nil {
+				return err
+			}
+			dl, dlcloser, dlerr := dlog.New(level)
 			if dlerr != nil {
 				fmt.Fprintf(os.Stderr, "dlog: %v\n", dlerr)
 				dl = dlog.Discard
@@ -130,7 +166,8 @@ func newRootCmd() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVar(&flagConfigPath, "config", "", "path to config.toml")
-	cmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose output")
+	cmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false,
+		"verbose output (synonym for DFM_LOG_LEVEL=debug; takes precedence over the env var)")
 
 	cmd.AddCommand(
 		newVersionCmd(),

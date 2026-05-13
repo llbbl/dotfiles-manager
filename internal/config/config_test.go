@@ -62,7 +62,7 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 }
 
 func TestLogBackendEnvOverride(t *testing.T) {
-	t.Setenv("DOTFILES_LOG_BACKEND", "DB")
+	t.Setenv("DFM_LOG_BACKEND", "DB")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -71,7 +71,7 @@ func TestLogBackendEnvOverride(t *testing.T) {
 		t.Errorf("expected env override to lowercase 'db', got %q", cfg.Log.Backend)
 	}
 
-	t.Setenv("DOTFILES_LOG_BACKEND", "")
+	t.Setenv("DFM_LOG_BACKEND", "")
 	cfg, err = Load("")
 	if err != nil {
 		t.Fatalf("load: %v", err)

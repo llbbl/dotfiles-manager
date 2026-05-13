@@ -32,7 +32,7 @@ path = "~/.local/share/dotfiles/logs/actions.jsonl"
 #   jsonl — JSONL file only
 #   db    — libSQL actions table only
 #   none  — disabled
-# Override at runtime via DOTFILES_LOG_BACKEND.
+# Override at runtime via DFM_LOG_BACKEND.
 backend = "both"
 
 [backup]

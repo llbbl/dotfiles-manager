@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
@@ -43,7 +44,61 @@ func migrateSubCmd(name, short string) *cobra.Command {
 			if flagVerbose {
 				fmt.Fprintf(c.ErrOrStderr(), "state: %s\n", target)
 			}
-			return store.RunGoose(ctx, db, name)
+
+			// Capture before/after versions to print a human-readable
+			// summary that replaces the goose-emitted "no migrations
+			// to run" line that's now routed through dlog at debug.
+			var before int64
+			if name == "up" || name == "down" || name == "redo" {
+				before, _ = store.CurrentDBVersion(ctx, db)
+			}
+			if err := store.RunGoose(ctx, db, name); err != nil {
+				return err
+			}
+			printMigrateSummary(c, db, name, before)
+			return nil
 		},
+	}
+}
+
+// printMigrateSummary emits a one-line human-readable summary after a
+// successful goose command, so that operators get feedback even though
+// goose's own output is suppressed at default log level.
+func printMigrateSummary(c *cobra.Command, db *sql.DB, name string, before int64) {
+	ctx := c.Context()
+	out := c.OutOrStdout()
+	switch name {
+	case "up":
+		after, err := store.CurrentDBVersion(ctx, db)
+		if err != nil {
+			fmt.Fprintf(out, "dfm migrate: up complete (current version unknown: %v)\n", err)
+			return
+		}
+		if after == before {
+			fmt.Fprintf(out, "dfm migrate: already at version %d — nothing to do\n", after)
+			return
+		}
+		fmt.Fprintf(out, "dfm migrate: migrated to version %d (%d applied)\n", after, after-before)
+	case "down":
+		after, err := store.CurrentDBVersion(ctx, db)
+		if err != nil {
+			fmt.Fprintf(out, "dfm migrate: down complete (current version unknown: %v)\n", err)
+			return
+		}
+		fmt.Fprintf(out, "dfm migrate: rolled back to version %d\n", after)
+	case "redo":
+		after, err := store.CurrentDBVersion(ctx, db)
+		if err != nil {
+			fmt.Fprintf(out, "dfm migrate: redo complete (current version unknown: %v)\n", err)
+			return
+		}
+		fmt.Fprintf(out, "dfm migrate: redo complete at version %d\n", after)
+	case "status":
+		after, err := store.CurrentDBVersion(ctx, db)
+		if err != nil {
+			fmt.Fprintf(out, "dfm migrate: status complete (current version unknown: %v)\n", err)
+			return
+		}
+		fmt.Fprintf(out, "dfm migrate: current version %d\n", after)
 	}
 }

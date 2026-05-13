@@ -115,7 +115,16 @@ func newTrackCmd() *cobra.Command {
 	return cmd
 }
 
+// openStore returns the store for the current command. It prefers
+// the store opened by the root command's PersistentPreRunE (which
+// also runs goose migrations), avoiding a redundant second store
+// open and second goose invocation per command. Callers must call
+// Close() on the returned store; when the cached store is returned
+// the Close is a no-op so the root command's PostRunE can clean up.
 func openStore(ctx context.Context) (*store.Store, error) {
+	if activeAudit.store != nil {
+		return activeAudit.store.SharedRef(), nil
+	}
 	cfg := config.FromContext(ctx)
 	if cfg == nil {
 		return nil, fmt.Errorf("config not loaded")
