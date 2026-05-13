@@ -35,6 +35,39 @@ Compare current file contents to last-known hash. Reports `clean`, `modified`, `
 
 Run the heuristic secrets scanner against a file without tracking it. Matches AWS keys, GitHub tokens, JWT-shaped strings, `.env`-style assignments, and a handful of other patterns. Findings print with the matched secret masked. Exit 3 if any finding, 0 if clean.
 
+## Aliases
+
+### `dfm alias add <name> <command>`
+
+Append a shell alias to a tracked rc file. The body is wrapped in dfm marker comments so managed entries are visually distinct from hand-written ones and so `dfm alias remove` can strip them precisely without regex guesswork.
+
+```
+# >>> dfm:alias cr >>>
+alias cr='claude --resume'
+# <<< dfm:alias cr <<<
+```
+
+The wrapper uses `#` comments, which work in both POSIX shells (bash/zsh/sh) and fish. Quoting inside the `alias` line follows shell-family rules: POSIX uses `'\''` to embed single quotes; fish uses `\'`.
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — pick which rc file to target (defaults to `$SHELL`).
+- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--replace` — overwrite any existing definition of this alias. Collapses pre-existing duplicates and rewrites legacy bare-line entries into the fenced form.
+- `--force` — append even if the alias is already defined (creates a duplicate) or if the secrets pre-flight flagged the new content. Mutually exclusive with `--replace`.
+
+Exit 4 if the alias is already defined and neither `--replace` nor `--force` was given. Exit 3 on secrets findings (suppressible with `--force`).
+
+Migration note: aliases added before dfm started emitting fenced blocks were written as a single line. Both `dfm alias remove` and the duplicate check still recognise that legacy form. Re-running `dfm alias add <name> ... --replace` rewrites the legacy entry into the new fenced form in-place.
+
+### `dfm alias remove <name>`
+
+Strip all definitions of `<name>` from the tracked rc file: fenced dfm blocks first, then any remaining legacy bare-line entries. Exit 4 if no definition exists.
+
+### `dfm alias list`
+
+Best-effort listing of aliases parsed from the tracked rc file. Reads the bare `alias` line inside each fenced block as well as un-fenced legacy entries.
+
 ## Backup repo + sync
 
 ### `dfm init`
