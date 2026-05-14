@@ -7,6 +7,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/llbbl/dotfiles-manager/internal/audit"
+	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
@@ -196,13 +198,19 @@ func newRestoreCmd() *cobra.Command {
 // --json emits the result as JSON.
 func newPruneCmd() *cobra.Command {
 	var (
-		dryRun bool
-		asJSON bool
+		dryRun  bool
+		asJSON  bool
+		orphans bool
+		yes     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Evict old snapshots per retention + size cap",
-		Args:  cobra.NoArgs,
+		Short: "Evict old snapshots per retention + size cap (or orphan blobs with --orphans)",
+		Long: "Without flags, prune evicts old snapshots according to the configured " +
+			"retention policy and size cap. With --orphans, prune ignores age/size and " +
+			"instead removes on-disk blobs whose SHA is no longer referenced by any " +
+			"snapshot row in the state DB.",
+		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			s, err := openStore(c.Context())
 			if err != nil {
@@ -213,6 +221,10 @@ func newPruneCmd() *cobra.Command {
 			mgr, err := newSnapshotManager(c.Context(), s)
 			if err != nil {
 				return err
+			}
+
+			if orphans {
+				return runPruneOrphans(c, mgr, dryRun, asJSON, yes)
 			}
 
 			var removed int
@@ -243,7 +255,96 @@ func newPruneCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be pruned")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit as JSON")
+	cmd.Flags().BoolVar(&orphans, "orphans", false,
+		"remove on-disk blobs not referenced by any snapshot row (ignores age/size policy)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt (orphan mode)")
 	return cmd
+}
+
+// runPruneOrphans implements `dfm prune --orphans`. It inventories
+// referenced blob hashes, walks the blob root, deletes orphans (or
+// reports them in dry-run mode), and emits a text or JSON summary.
+func runPruneOrphans(c *cobra.Command, mgr *snapshot.Manager, dryRun, asJSON, yes bool) error {
+	ctx := c.Context()
+	refs, err := mgr.ReferencedHashes(ctx)
+	if err != nil {
+		return err
+	}
+	paths, bytes, err := snapshot.FindOrphans(mgr.Dir(), refs)
+	if err != nil {
+		return err
+	}
+
+	if asJSON {
+		out := map[string]any{
+			"orphans":     len(paths),
+			"bytes_freed": bytes,
+			"dry_run":     dryRun,
+		}
+		if dryRun {
+			out["paths"] = paths
+		}
+		if !dryRun && len(paths) > 0 && !yes {
+			// JSON callers cannot answer a prompt; require --yes
+			// for a non-dry-run JSON invocation.
+			return exitf(exitResolveErr,
+				"refusing to delete %d orphan blob(s) without --yes in --json mode", len(paths))
+		}
+		if !dryRun && len(paths) > 0 {
+			if err := snapshot.RemoveOrphans(mgr.Dir(), paths); err != nil {
+				return err
+			}
+			audit.Log(ctx, "snapshot.orphans_pruned", map[string]any{
+				"removed":     len(paths),
+				"bytes_freed": bytes,
+			})
+			dlog.From(ctx).Info("orphans pruned", "removed", len(paths), "bytes_freed", bytes)
+		}
+		return writeJSON(c.OutOrStdout(), out)
+	}
+
+	out := c.OutOrStdout()
+	if len(paths) == 0 {
+		fmt.Fprintln(out, "no orphan blobs")
+		return nil
+	}
+
+	prefix := "would prune"
+	if !dryRun {
+		prefix = "pruned"
+	}
+	if dryRun {
+		fmt.Fprintf(out, "%s %d orphan blob(s), would free %s\n",
+			prefix, len(paths), humanBytes(bytes))
+		for _, p := range paths {
+			fmt.Fprintln(out, "  ", p)
+		}
+		return nil
+	}
+
+	if !yes {
+		ok, perr := confirmYN(out,
+			fmt.Sprintf("delete %d orphan blob(s) totaling %s? [y/N] ",
+				len(paths), humanBytes(bytes)))
+		if perr != nil {
+			return perr
+		}
+		if !ok {
+			fmt.Fprintln(out, "aborted")
+			return nil
+		}
+	}
+
+	if err := snapshot.RemoveOrphans(mgr.Dir(), paths); err != nil {
+		return err
+	}
+	audit.Log(ctx, "snapshot.orphans_pruned", map[string]any{
+		"removed":     len(paths),
+		"bytes_freed": bytes,
+	})
+	dlog.From(ctx).Info("orphans pruned", "removed", len(paths), "bytes_freed", bytes)
+	fmt.Fprintf(out, "%s %d orphan blob(s), freed %s\n", prefix, len(paths), humanBytes(bytes))
+	return nil
 }
 
 func snapshotJSON(sn snapshot.Snapshot) map[string]any {
