@@ -23,6 +23,7 @@ just build-versioned      # build ./bin/dfm with version info baked in
 - [Development](./docs/development.md) — local setup, environment variables, testing, contribution workflow.
 - [Commands](./docs/commands.md) — full `dfm` CLI reference.
 - [Architecture](./docs/architecture.md) — what the moving parts are and how they fit together.
+- [Changelog](./CHANGELOG.md) — release-by-release summary of changes.
 
 ## License
 
