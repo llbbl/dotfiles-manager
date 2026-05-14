@@ -61,6 +61,8 @@ var (
 var (
 	flagConfigPath string
 	flagVerbose    bool
+	flagNoDotenv   bool
+	flagDotenvPath string
 )
 
 // auditState holds the per-invocation audit logger + store so PersistentPostRunE can close them.
@@ -104,6 +106,24 @@ func newRootCmd() *cobra.Command {
 			"to suggest improvements as reviewable patches.",
 		SilenceUsage: true,
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			// Resolve the config path early — both the dotenv resolver
+			// (for [runtime].dotenv) and the main config Load below
+			// consume it.
+			path := flagConfigPath
+			if path == "" {
+				p, err := config.DefaultPath()
+				if err != nil {
+					return err
+				}
+				path = p
+			}
+
+			// Apply .env BEFORE any env-driven config reads
+			// (resolveLogLevel below, plus TURSO_* in config.Load).
+			if _, err := resolveAndLoadDotenv(flagNoDotenv, flagDotenvPath, os.Getenv(envFileEnvVar), path); err != nil {
+				return err
+			}
+
 			level, err := resolveLogLevel(flagVerbose, os.Getenv(envLogLevel))
 			if err != nil {
 				return err
@@ -117,14 +137,6 @@ func newRootCmd() *cobra.Command {
 			activeDlog = dlogState{logger: dl, closer: dlcloser}
 			c.SetContext(dlog.Into(c.Context(), dl))
 
-			path := flagConfigPath
-			if path == "" {
-				p, err := config.DefaultPath()
-				if err != nil {
-					return err
-				}
-				path = p
-			}
 			cfg, err := config.Load(path)
 			if err != nil {
 				return err
@@ -168,6 +180,10 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&flagConfigPath, "config", "", "path to config.toml")
 	cmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false,
 		"verbose output (synonym for DFM_LOG_LEVEL=debug; takes precedence over the env var)")
+	cmd.PersistentFlags().BoolVar(&flagNoDotenv, "no-dotenv", false,
+		"skip .env file loading entirely (overrides --dotenv, DFM_ENV_FILE, and [runtime].dotenv)")
+	cmd.PersistentFlags().StringVar(&flagDotenvPath, "dotenv", "",
+		"explicit path to a .env file to load before reading config (missing file = error)")
 
 	cmd.AddCommand(
 		newVersionCmd(),

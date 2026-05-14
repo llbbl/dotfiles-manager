@@ -19,11 +19,26 @@ import (
 // Config is the fully-resolved TOML configuration used throughout the
 // application.
 type Config struct {
-	Repo   RepoConfig   `toml:"repo"`
-	AI     AIConfig     `toml:"ai"`
-	Log    LogConfig    `toml:"log"`
-	State  StateConfig  `toml:"state"`
-	Backup BackupConfig `toml:"backup"`
+	Repo    RepoConfig    `toml:"repo"`
+	AI      AIConfig      `toml:"ai"`
+	Log     LogConfig     `toml:"log"`
+	State   StateConfig   `toml:"state"`
+	Backup  BackupConfig  `toml:"backup"`
+	Runtime RuntimeConfig `toml:"runtime"`
+}
+
+// RuntimeConfig groups settings that affect how the dfm process starts
+// up, before the main config is read. The only field today is Dotenv,
+// which controls .env-file injection of process environment variables.
+//
+// Dotenv values:
+//
+//	""        — disabled (default)
+//	"off"     — disabled (explicit)
+//	"auto"    — load $XDG_CONFIG_HOME/dotfiles/.env or ./.env if present
+//	"<path>"  — explicit path; missing file is an error
+type RuntimeConfig struct {
+	Dotenv string `toml:"dotenv"`
 }
 
 // BackupConfig controls the snapshot blob store: where blobs live on
@@ -208,6 +223,32 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// LoadRuntimeOnly parses just the [runtime] section from path. It is
+// intended for the early-startup dotenv resolver, which must read this
+// section BEFORE the full config Load (because dotenv-injected vars
+// like TURSO_DATABASE_URL participate in the real Load).
+//
+// A missing or unreadable file yields a zero RuntimeConfig and nil
+// error — the caller decides whether that's acceptable.
+func LoadRuntimeOnly(path string) (RuntimeConfig, error) {
+	if path == "" {
+		return RuntimeConfig{}, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return RuntimeConfig{}, nil
+		}
+		return RuntimeConfig{}, fmt.Errorf("stat %s: %w", path, err)
+	}
+	var shell struct {
+		Runtime RuntimeConfig `toml:"runtime"`
+	}
+	if _, err := toml.DecodeFile(path, &shell); err != nil {
+		return RuntimeConfig{}, fmt.Errorf("decode %s: %w", path, err)
+	}
+	return shell.Runtime, nil
 }
 
 // Save writes cfg as TOML to path, creating parent directories as

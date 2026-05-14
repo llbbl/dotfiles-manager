@@ -50,14 +50,14 @@ jobs:
             exit 0
           fi
 
-          if echo "$commits" | grep -qE "^(feat|fix|refactor)(\(.+\))?!:|BREAKING CHANGE"; then
-            major=$((major + 1))
-            minor=0
-            patch=0
-          elif echo "$commits" | grep -qE "^feat(\(.+\))?:"; then
+          # Major bumps are MANUAL — see docs/development.md "Releases" section.
+          # `feat!:` / `BREAKING CHANGE:` footers fall through to the feat branch
+          # below (minor bump), not a major bump. This guards against accidental
+          # 2.0 releases while the project is still in rapid-iteration mode.
+          if echo "$commits" | grep -qE "^feat(\(.+\))?!?:"; then
             minor=$((minor + 1))
             patch=0
-          elif echo "$commits" | grep -qE "^(fix|perf)(\(.+\))?:"; then
+          elif echo "$commits" | grep -qE "^(fix|perf)(\(.+\))?!?:"; then
             patch=$((patch + 1))
           else
             echo "No release-worthy commits since $latest_tag; skipping."
