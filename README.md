@@ -4,7 +4,11 @@ A single distributable Go binary (`dfm`) that helps you manage, version, and imp
 
 Status: pre-alpha — APIs and CLI flags may change without notice.
 
-## Quickstart
+## Install
+
+Grab a pre-built binary from the [Releases page](https://github.com/llbbl/dotfiles-manager/releases) — darwin and linux, arm64 and amd64. Full step-by-step (download, checksum, extract, install onto your `PATH`) is in [docs/install.md](./docs/install.md).
+
+## Build from source
 
 ```sh
 just install              # tidy and download Go module deps
@@ -15,6 +19,7 @@ just build-versioned      # build ./bin/dfm with version info baked in
 
 ## Documentation
 
+- [Install](./docs/install.md) — install from GitHub Releases.
 - [Development](./docs/development.md) — local setup, environment variables, testing, contribution workflow.
 - [Commands](./docs/commands.md) — full `dfm` CLI reference.
 - [Architecture](./docs/architecture.md) — what the moving parts are and how they fit together.
