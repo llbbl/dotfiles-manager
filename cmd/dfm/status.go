@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -62,9 +61,7 @@ func newStatusCmd() *cobra.Command {
 					}
 					out = append(out, entry)
 				}
-				enc := json.NewEncoder(c.OutOrStdout())
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(out); err != nil {
+				if err := writeJSON(c.OutOrStdout(), out); err != nil {
 					return err
 				}
 			} else if len(reports) == 0 {

@@ -134,7 +134,7 @@ func newApplyCmd() *cobra.Command {
 			audit.Log(ctx, "apply", baseFields)
 
 			if asJSON {
-				return jsonEncode(out, res)
+				return writeJSON(out, res)
 			}
 			short := res.NewHash
 			if len(short) > 8 {

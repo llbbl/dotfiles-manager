@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"text/tabwriter"
 	"time"
@@ -46,9 +45,7 @@ func newListCmd() *cobra.Command {
 					}
 					out = append(out, entry)
 				}
-				enc := json.NewEncoder(c.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(out)
+				return writeJSON(c.OutOrStdout(), out)
 			}
 
 			if len(files) == 0 {

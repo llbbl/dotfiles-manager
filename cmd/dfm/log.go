@@ -148,7 +148,7 @@ func newLogCmd() *cobra.Command {
 						"payload": e.Payload,
 					})
 				}
-				return jsonEncode(c.OutOrStdout(), out)
+				return writeJSON(c.OutOrStdout(), out)
 			}
 
 			if len(entries) == 0 {

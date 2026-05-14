@@ -91,7 +91,7 @@ func newSuggestionsCmd() *cobra.Command {
 						"created_at":   sg.CreatedAt.Format("2006-01-02T15:04:05Z"),
 					})
 				}
-				return jsonEncode(out, list)
+				return writeJSON(out, list)
 			}
 			if len(rows) == 0 {
 				fmt.Fprintln(out, "no suggestions")
