@@ -50,3 +50,23 @@ retention_days = 90
 #   TURSO_DATABASE_URL   libsql://<db>-<org>.turso.io   (or unset for embedded file)
 #   TURSO_AUTH_TOKEN     long-lived token from `turso db tokens create <db>`
 # See .env.example.
+
+[runtime]
+# Optional .env file loaded at startup, BEFORE any other config reads.
+# KEY=VALUE pairs are applied via os.Setenv only when the key is not
+# already set in the shell environment — your shell always wins.
+#
+# Values:
+#   ""        — disabled (default)
+#   "off"     — disabled (explicit)
+#   "auto"    — load $XDG_CONFIG_HOME/dotfiles/.env or ./.env if either
+#               exists; silently skip if neither does.
+#   "<path>"  — explicit path; missing file is an error (exit 2).
+#
+# CLI overrides (in precedence order, highest first):
+#   --no-dotenv         skip entirely
+#   --dotenv <path>     explicit path
+#   DFM_ENV_FILE        explicit path (env var)
+#
+# Run `dfm config show` to see which source (if any) was loaded.
+dotenv = ""

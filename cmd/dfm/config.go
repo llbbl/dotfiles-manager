@@ -25,6 +25,7 @@ func newConfigCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				fmt.Printf("# dotenv_source = %q\n", dotenvSource)
 				fmt.Print(string(b))
 				return nil
 			},
