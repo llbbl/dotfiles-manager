@@ -11,9 +11,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
+	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -532,10 +532,9 @@ func newAliasAddCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			f := file
-			snap, err := mgr.Snapshot(c.Context(), canonical, &f, snapshot.ReasonPreEdit)
+			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
 			if err != nil {
-				return fmt.Errorf("pre-edit snapshot: %w", err)
+				return err
 			}
 
 			if err := atomicWrite(canonical, newBytes, info.Mode().Perm()); err != nil {
@@ -544,11 +543,6 @@ func newAliasAddCmd() *cobra.Command {
 
 			sum := sha256.Sum256(newBytes)
 			newHash := hex.EncodeToString(sum[:])
-
-			if _, err := s.DB().ExecContext(c.Context(),
-				`UPDATE tracked_files SET last_hash = ? WHERE id = ?`, newHash, file.ID); err != nil {
-				return fmt.Errorf("update tracked_files: %w", err)
-			}
 
 			// `sub_action` is the user-intent path (append/replace/
 			// force-append). `block_action` is the block-level effect
@@ -566,20 +560,16 @@ func newAliasAddCmd() *cobra.Command {
 
 			// Privacy: NEVER include the command body. Name + shell +
 			// group + counts + hashes only.
-			fields := map[string]any{
-				"display_path": file.DisplayPath,
-				"file_id":      file.ID,
-				"snapshot_id":  snap.ID,
+			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "alias.add", map[string]any{
 				"alias_name":   name,
 				"shell":        family,
 				"group":        groupLabel,
 				"sub_action":   subAction,
 				"block_action": blockAction,
-				"old_hash":     file.LastHash,
-				"new_hash":     newHash,
 				"bytes_delta":  bytesDelta,
+			}); err != nil {
+				return err
 			}
-			audit.Log(c.Context(), "alias.add", fields)
 
 			switch subAction {
 			case "replace":
@@ -658,10 +648,9 @@ func newAliasRemoveCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			f := file
-			snap, err := mgr.Snapshot(c.Context(), canonical, &f, snapshot.ReasonPreEdit)
+			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
 			if err != nil {
-				return fmt.Errorf("pre-edit snapshot: %w", err)
+				return err
 			}
 
 			if err := atomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
@@ -670,20 +659,13 @@ func newAliasRemoveCmd() *cobra.Command {
 
 			sum := sha256.Sum256(newContent)
 			newHash := hex.EncodeToString(sum[:])
-			if _, err := s.DB().ExecContext(c.Context(),
-				`UPDATE tracked_files SET last_hash = ? WHERE id = ?`, newHash, file.ID); err != nil {
-				return fmt.Errorf("update tracked_files: %w", err)
-			}
 
 			// `lines_removed` is the user-visible total. The breakdown
 			// fields let audit consumers tell where the entries came
 			// from: legacy per-alias blocks, evictions from shared
 			// blocks, stray bare lines, and how many shared blocks went
 			// empty as a side-effect.
-			audit.Log(c.Context(), "alias.remove", map[string]any{
-				"display_path":           file.DisplayPath,
-				"file_id":                file.ID,
-				"snapshot_id":            snap.ID,
+			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "alias.remove", map[string]any{
 				"alias_name":             name,
 				"shell":                  family,
 				"lines_removed":          removed,
@@ -691,9 +673,9 @@ func newAliasRemoveCmd() *cobra.Command {
 				"bare_lines_removed":     rc.bareLines,
 				"shared_block_evictions": rc.sharedEvicted,
 				"empty_blocks_dropped":   rc.emptiedBlocks,
-				"old_hash":               file.LastHash,
-				"new_hash":               newHash,
-			})
+			}); err != nil {
+				return err
+			}
 
 			fmt.Fprintf(c.OutOrStdout(),
 				"removed %d alias line(s) for '%s' from %s\n", removed, name, file.DisplayPath)

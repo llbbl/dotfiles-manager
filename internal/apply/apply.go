@@ -256,10 +256,11 @@ func (r *Repo) Apply(ctx context.Context, mgr *snapshot.Manager, id string) (App
 	}
 	dlog.From(ctx).Debug("hunks applied", "n", hunks, "new_hash", short)
 
-	if _, err := r.s.DB().ExecContext(ctx,
-		`UPDATE tracked_files SET last_hash = ? WHERE id = ?`, newHash, file.ID); err != nil {
-		return ApplyResult{}, &PostSnapshotError{SnapshotID: snap.ID,
-			Err: fmt.Errorf("update tracked_files: %w", err)}
+	// Audit is intentionally suppressed here (action=""): the cmd/dfm
+	// apply caller emits its own audit event with a different field
+	// shape (suggestion_id, duration_ms, etc.) after Apply returns.
+	if err := tracker.RecordHashChange(ctx, r.s, file, newHash, snap.ID, "", nil); err != nil {
+		return ApplyResult{}, &PostSnapshotError{SnapshotID: snap.ID, Err: err}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
