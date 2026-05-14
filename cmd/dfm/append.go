@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
+	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -77,10 +77,9 @@ func newAppendCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			f := file
-			snap, err := mgr.Snapshot(c.Context(), canonical, &f, snapshot.ReasonPreEdit)
+			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
 			if err != nil {
-				return fmt.Errorf("pre-edit snapshot: %w", err)
+				return err
 			}
 
 			if err := atomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
@@ -90,19 +89,11 @@ func newAppendCmd() *cobra.Command {
 			sum := sha256.Sum256(newContent)
 			newHash := hex.EncodeToString(sum[:])
 
-			if _, err := s.DB().ExecContext(c.Context(),
-				`UPDATE tracked_files SET last_hash = ? WHERE id = ?`, newHash, file.ID); err != nil {
-				return fmt.Errorf("update tracked_files: %w", err)
-			}
-
-			audit.Log(c.Context(), "append", map[string]any{
-				"display_path":  file.DisplayPath,
-				"file_id":       file.ID,
-				"snapshot_id":   snap.ID,
+			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "append", map[string]any{
 				"bytes_appended": len(appendBytes),
-				"old_hash":      file.LastHash,
-				"new_hash":      newHash,
-			})
+			}); err != nil {
+				return err
+			}
 
 			short := newHash
 			if len(short) > 8 {

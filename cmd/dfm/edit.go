@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -39,10 +38,9 @@ func newEditCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			f := file
-			snap, err := mgr.Snapshot(c.Context(), canonical, &f, snapshot.ReasonPreEdit)
+			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
 			if err != nil {
-				return fmt.Errorf("pre-edit snapshot: %w", err)
+				return err
 			}
 
 			if err := runEditor(canonical); err != nil {
@@ -59,18 +57,9 @@ func newEditCmd() *cobra.Command {
 				return nil
 			}
 
-			if _, err := s.DB().ExecContext(c.Context(),
-				`UPDATE tracked_files SET last_hash = ? WHERE id = ?`, newHash, file.ID); err != nil {
-				return fmt.Errorf("update tracked_files: %w", err)
+			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "edit", nil); err != nil {
+				return err
 			}
-
-			audit.Log(c.Context(), "edit", map[string]any{
-				"display_path": file.DisplayPath,
-				"file_id":      file.ID,
-				"snapshot_id":  snap.ID,
-				"old_hash":     file.LastHash,
-				"new_hash":     newHash,
-			})
 
 			short := newHash
 			if len(short) > 8 {
