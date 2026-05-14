@@ -115,6 +115,46 @@ func TestRepo_Apply_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRepo_Apply_BareHunkHeader_ResolvedAtApplyTime(t *testing.T) {
+	// End-to-end: a bare-`@@` diff is written directly into the
+	// suggestions table (bypassing the strict Validate that
+	// `dfm suggest` enforces). Repo.Apply must accept it because the
+	// hunk body has a unique anchor in the source.
+	ctx, s, mgr := setupApplyEnv(t)
+
+	fixDir := t.TempDir()
+	fix := filepath.Join(fixDir, "fixture.txt")
+	if err := os.WriteFile(fix, []byte("alpha\nbeta\n# fixture\nfoo=bar\ngamma\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	canonical, display, err := tracker.Resolve(fix)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	file, err := tracker.Track(ctx, s, canonical, display,
+		tracker.TrackOptions{SkipSecretCheck: true})
+	if err != nil {
+		t.Fatalf("track: %v", err)
+	}
+
+	bareDiff := "--- a/fixture.txt\n+++ b/fixture.txt\n@@\n # fixture\n-foo=bar\n+foo=baz\n"
+	id := insertSuggestion(t, ctx, s, file.ID, bareDiff)
+
+	repo := NewRepo(s)
+	res, err := repo.Apply(ctx, mgr, id)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.HunksApplied != 1 {
+		t.Errorf("hunks = %d, want 1", res.HunksApplied)
+	}
+	got, _ := os.ReadFile(fix)
+	want := "alpha\nbeta\n# fixture\nfoo=baz\ngamma\n"
+	if string(got) != want {
+		t.Errorf("file = %q, want %q", got, want)
+	}
+}
+
 func TestRepo_Apply_DiffDoesNotApply_KeepsPendingAndSnapshot(t *testing.T) {
 	ctx, s, mgr := setupApplyEnv(t)
 

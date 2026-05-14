@@ -210,12 +210,20 @@ func (r *Repo) Apply(ctx context.Context, mgr *snapshot.Manager, id string) (App
 		return ApplyResult{}, fmt.Errorf("read %s: %w", file.Path, err)
 	}
 
-	fs, err := Validate(sg.Diff)
+	// Apply-time parsing is tolerant: a bare `@@` hunk header is
+	// accepted and resolved against the source bytes via
+	// ResolveSentinelHunks below. `dfm suggest` already uses the
+	// strict Validate to gate writes into the DB, so this concession
+	// only kicks in for hand-crafted patches or future regressions.
+	fs, err := ParseTolerant(sg.Diff)
 	if err != nil {
 		return ApplyResult{}, err
 	}
 	if !diffTargets(fs, file) {
 		return ApplyResult{}, fmt.Errorf("%w: diff target mismatch", ErrDiffMalformed)
+	}
+	if err := ResolveSentinelHunks(&fs, orig); err != nil {
+		return ApplyResult{}, err
 	}
 
 	// Snapshot BEFORE any write.

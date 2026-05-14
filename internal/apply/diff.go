@@ -33,10 +33,34 @@ type HunkLine struct {
 	NoNewline bool
 }
 
-// Validate parses a unified diff. Returns ErrDiffEmpty if there is no
-// content and ErrDiffMalformed for everything else that fails to parse,
-// or if the diff covers more than one file pair.
+// Validate parses a unified diff in strict mode. Returns ErrDiffEmpty
+// if there is no content and ErrDiffMalformed for everything else that
+// fails to parse, or if the diff covers more than one file pair. Bare
+// `@@` hunk headers (no `-N,M +N,M` ranges) are rejected here.
+//
+// Validate is used by `dfm suggest` to gate writes into the suggestions
+// table; it has no access to the target file's bytes, so it cannot
+// resolve bare-`@@` ranges and refuses them outright.
 func Validate(diff string) (FileSet, error) {
+	return Parse(diff)
+}
+
+// Parse is the strict parser. It is an alias for Validate kept for
+// clarity at call sites that want to make the strictness explicit.
+func Parse(diff string) (FileSet, error) {
+	return parse(diff, false)
+}
+
+// ParseTolerant accepts bare `@@` hunk headers and emits a sentinel
+// Hunk for each (OldStart == 0). The caller MUST run
+// ResolveSentinelHunks against the target file bytes before passing
+// the FileSet to ApplyToBytes, otherwise the sentinel hunks will not
+// apply cleanly.
+func ParseTolerant(diff string) (FileSet, error) {
+	return parse(diff, true)
+}
+
+func parse(diff string, tolerant bool) (FileSet, error) {
 	if strings.TrimSpace(diff) == "" {
 		return FileSet{}, ErrDiffEmpty
 	}
@@ -82,7 +106,7 @@ func Validate(diff string) (FileSet, error) {
 			if err := flushHunk(); err != nil {
 				return FileSet{}, err
 			}
-			h, err := parseHunkHeader(line)
+			h, err := parseHunkHeader(line, tolerant)
 			if err != nil {
 				return FileSet{}, err
 			}
@@ -125,7 +149,7 @@ func Validate(diff string) (FileSet, error) {
 	return fs, nil
 }
 
-func parseHunkHeader(line string) (Hunk, error) {
+func parseHunkHeader(line string, tolerant bool) (Hunk, error) {
 	// @@ -OLD_START,OLD_COUNT +NEW_START,NEW_COUNT @@ optional context
 	bad := func() (Hunk, error) {
 		return Hunk{}, fmt.Errorf("%w: bad hunk header %q", ErrDiffMalformed, line)
@@ -133,11 +157,21 @@ func parseHunkHeader(line string) (Hunk, error) {
 	rest := strings.TrimPrefix(line, "@@")
 	idx := strings.Index(rest, "@@")
 	if idx < 0 {
+		// Bare `@@` with no trailing `@@` — e.g. just "@@" on its own
+		// line. In tolerant mode, emit a sentinel hunk.
+		if tolerant && strings.TrimSpace(rest) == "" {
+			return Hunk{}, nil
+		}
 		return bad()
 	}
 	spec := strings.TrimSpace(rest[:idx])
 	parts := strings.Fields(spec)
 	if len(parts) < 2 {
+		// Bare `@@ @@` (no usable ranges). Tolerant mode emits a
+		// sentinel; strict mode rejects.
+		if tolerant {
+			return Hunk{}, nil
+		}
 		return bad()
 	}
 	oldStart, oldCount, err := parseRange(parts[0], '-')
@@ -186,6 +220,80 @@ func atoi(s string) (int, error) {
 		n = n*10 + int(r-'0')
 	}
 	return n, nil
+}
+
+// ResolveSentinelHunks walks fs.Hunks and fills in the ranges for any
+// sentinel hunk produced by ParseTolerant (those with OldStart == 0).
+// Resolution requires the source file bytes (`orig`) so that the
+// hunk's context+removal lines can be matched against the file as a
+// unique line-exact sub-sequence.
+//
+// Returns ErrDiffDoesNotApply when a sentinel hunk's body matches zero
+// or more than one location in `orig`. Hunks that already have
+// non-zero OldStart are left untouched.
+func ResolveSentinelHunks(fs *FileSet, orig []byte) error {
+	if fs == nil {
+		return nil
+	}
+	var lines []string
+	for i := range fs.Hunks {
+		h := &fs.Hunks[i]
+		if h.OldStart != 0 {
+			continue
+		}
+		if lines == nil {
+			lines = splitLines(orig)
+		}
+		var expect []string
+		oldCount := 0
+		newCount := 0
+		for _, hl := range h.Lines {
+			switch hl.Kind {
+			case ' ':
+				expect = append(expect, hl.Text)
+				oldCount++
+				newCount++
+			case '-':
+				expect = append(expect, hl.Text)
+				oldCount++
+			case '+':
+				newCount++
+			}
+		}
+		if len(expect) == 0 {
+			return fmt.Errorf("%w: bare @@ hunk has no context or removed lines", ErrDiffMalformed)
+		}
+		var matches []int // 1-based start line numbers
+		for start := 0; start+len(expect) <= len(lines); start++ {
+			ok := true
+			for j, want := range expect {
+				if lines[start+j] != want {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				matches = append(matches, start+1)
+				if len(matches) > 1 {
+					// Don't bother scanning further than we need to
+					// produce a useful "ambiguous" message — but keep
+					// scanning so we can name every candidate.
+				}
+			}
+		}
+		switch len(matches) {
+		case 0:
+			return fmt.Errorf("%w: bare @@ hunk: no match in source", ErrDiffDoesNotApply)
+		case 1:
+			h.OldStart = matches[0]
+			h.OldCount = oldCount
+			h.NewStart = matches[0]
+			h.NewCount = newCount
+		default:
+			return fmt.Errorf("%w: bare @@ hunk: ambiguous, matches at lines %v", ErrDiffDoesNotApply, matches)
+		}
+	}
+	return nil
 }
 
 const offsetTolerance = 3
@@ -330,7 +438,7 @@ func findHunk(lines []string, base int, h Hunk) (int, bool) {
 
 // detectLineSep returns "\r\n" if the original looks CRLF, else "\n".
 func detectLineSep(b []byte) string {
-	for i := 0; i < len(b); i++ {
+	for i := range len(b) {
 		if b[i] == '\n' {
 			if i > 0 && b[i-1] == '\r' {
 				return "\r\n"
