@@ -18,8 +18,9 @@ func configWithCtx(ctx context.Context, cfg *config.Config) context.Context {
 }
 
 func TestMigrateCmd_Status_PrintsSummary(t *testing.T) {
-	ctx, _, cfg, _ := setupApplyCmdEnv(t)
-	ctx = configWithCtx(ctx, cfg)
+	env := newTestEnv(t)
+	cfg := env.Cfg
+	ctx := configWithCtx(env.Ctx, cfg)
 	root := newMigrateCmd()
 	root.SetContext(ctx)
 	var out bytes.Buffer
@@ -45,8 +46,9 @@ func TestMigrateCmd_Status_PrintsSummary(t *testing.T) {
 // configureGoose, idempotent migration runs would print
 // "goose: no migrations to run. current version: N" to stderr.
 func TestListCmd_NoGooseStdlibLeak(t *testing.T) {
-	ctx, _, cfg, _ := setupApplyCmdEnv(t)
-	ctx = configWithCtx(ctx, cfg)
+	env := newTestEnv(t)
+	cfg := env.Cfg
+	ctx := configWithCtx(env.Ctx, cfg)
 
 	// Capture anything written via stdlib log.
 	var stdlibBuf bytes.Buffer
@@ -91,8 +93,9 @@ func TestListCmd_NoGooseStdlibLeak(t *testing.T) {
 }
 
 func TestMigrateCmd_Up_AlreadyAtCurrentVersion(t *testing.T) {
-	ctx, _, cfg, _ := setupApplyCmdEnv(t)
-	ctx = configWithCtx(ctx, cfg)
+	env := newTestEnv(t)
+	cfg := env.Cfg
+	ctx := configWithCtx(env.Ctx, cfg)
 	root := newMigrateCmd()
 	root.SetContext(ctx)
 	var out bytes.Buffer

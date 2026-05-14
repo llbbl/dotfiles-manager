@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/ai"
-	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -44,35 +43,6 @@ func (f *fakeProvider) Suggest(_ context.Context, _ ai.SuggestRequest) (ai.Sugge
 	return ai.SuggestResponse{Diff: f.diff, Summary: f.summary, Duration: time.Millisecond}, nil
 }
 
-func setupSuggestEnv(t *testing.T) (*config.Config, *store.Store, string) {
-	t.Helper()
-	root := t.TempDir()
-	logPath := filepath.Join(root, "logs", "actions.jsonl")
-	cfg := &config.Config{
-		Log:   config.LogConfig{Path: logPath, Backend: "both"},
-		State: config.StateConfig{URL: "file://" + filepath.Join(root, "state.db")},
-	}
-	cfg.AI.Provider = "claude-code"
-
-	ctx := context.Background()
-	s, err := store.New(ctx, cfg)
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	logger, err := audit.New(ctx, cfg, s)
-	if err != nil {
-		t.Fatalf("audit.New: %v", err)
-	}
-	audit.SetDefault(logger)
-	t.Cleanup(func() {
-		_ = logger.Close()
-		audit.SetDefault(nil)
-	})
-	return cfg, s, logPath
-}
-
 func swapProvider(t *testing.T, p ai.Provider) {
 	t.Helper()
 	prev := providerFactory
@@ -81,8 +51,9 @@ func swapProvider(t *testing.T, p ai.Provider) {
 }
 
 func TestSuggest_WritesPendingRow(t *testing.T) {
-	cfg, s, logPath := setupSuggestEnv(t)
-	ctx := config.WithContext(context.Background(), cfg)
+	env := newTestEnv(t)
+	cfg, s, logPath := env.Cfg, env.Store, env.Paths.LogPath
+	ctx := config.WithContext(env.Ctx, cfg)
 
 	fixture := filepath.Join(t.TempDir(), "fixture.txt")
 	if err := os.WriteFile(fixture, []byte("# fixture\nfoo=bar\n"), 0o644); err != nil {
@@ -134,8 +105,9 @@ func TestSuggest_WritesPendingRow(t *testing.T) {
 }
 
 func TestSuggest_UntrackedExits4(t *testing.T) {
-	cfg, _, _ := setupSuggestEnv(t)
-	ctx := config.WithContext(context.Background(), cfg)
+	env := newTestEnv(t)
+	cfg := env.Cfg
+	ctx := config.WithContext(env.Ctx, cfg)
 
 	fixture := filepath.Join(t.TempDir(), "untracked.txt")
 	if err := os.WriteFile(fixture, []byte("hi\n"), 0o644); err != nil {
@@ -182,8 +154,9 @@ func trackFixtureForSuggest(t *testing.T, ctx context.Context, s *store.Store) s
 }
 
 func TestSuggest_MalformedHunkHeaderRefusesWrite(t *testing.T) {
-	cfg, s, _ := setupSuggestEnv(t)
-	ctx := config.WithContext(context.Background(), cfg)
+	env := newTestEnv(t)
+	cfg, s := env.Cfg, env.Store
+	ctx := config.WithContext(env.Ctx, cfg)
 	fixture := trackFixtureForSuggest(t, ctx, s)
 
 	// Bare "@@" hunk header — the real-world failure that motivated this.
@@ -222,8 +195,9 @@ func TestSuggest_MalformedHunkHeaderRefusesWrite(t *testing.T) {
 }
 
 func TestSuggest_NonDiffProseRefusesWrite(t *testing.T) {
-	cfg, s, _ := setupSuggestEnv(t)
-	ctx := config.WithContext(context.Background(), cfg)
+	env := newTestEnv(t)
+	cfg, s := env.Cfg, env.Store
+	ctx := config.WithContext(env.Ctx, cfg)
 	fixture := trackFixtureForSuggest(t, ctx, s)
 
 	fake := &fakeProvider{
@@ -257,8 +231,9 @@ func TestSuggest_NonDiffProseRefusesWrite(t *testing.T) {
 }
 
 func TestSuggest_MalformedJSONModeEmitsError(t *testing.T) {
-	cfg, s, _ := setupSuggestEnv(t)
-	ctx := config.WithContext(context.Background(), cfg)
+	env := newTestEnv(t)
+	cfg, s := env.Cfg, env.Store
+	ctx := config.WithContext(env.Ctx, cfg)
 	fixture := trackFixtureForSuggest(t, ctx, s)
 
 	badDiff := "--- a/fixture.txt\n+++ b/fixture.txt\n@@\n # fixture\n-foo=bar\n+foo=\"bar\"\n"
@@ -304,8 +279,9 @@ func TestSuggest_MalformedJSONModeEmitsError(t *testing.T) {
 }
 
 func TestSuggest_OversizeFileSkipsProvider(t *testing.T) {
-	cfg, s, _ := setupSuggestEnv(t)
-	ctx := config.WithContext(context.Background(), cfg)
+	env := newTestEnv(t)
+	cfg, s := env.Cfg, env.Store
+	ctx := config.WithContext(env.Ctx, cfg)
 
 	fixture := filepath.Join(t.TempDir(), "big.txt")
 	if err := os.WriteFile(fixture, []byte("# small\n"), 0o644); err != nil {

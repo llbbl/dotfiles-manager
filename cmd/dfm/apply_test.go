@@ -19,36 +19,6 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
-func setupApplyCmdEnv(t *testing.T) (context.Context, *store.Store, *config.Config, string) {
-	t.Helper()
-	root := t.TempDir()
-	logPath := filepath.Join(root, "logs", "actions.jsonl")
-	cfg := &config.Config{
-		Log:    config.LogConfig{Path: logPath, Backend: "both"},
-		State:  config.StateConfig{URL: "file://" + filepath.Join(root, "state.db")},
-		Backup: config.BackupConfig{Dir: filepath.Join(root, "backups")},
-	}
-	cfg.AI.Provider = "claude-code"
-
-	ctx := context.Background()
-	s, err := store.New(ctx, cfg)
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	l, err := audit.New(ctx, cfg, s)
-	if err != nil {
-		t.Fatalf("audit.New: %v", err)
-	}
-	audit.SetDefault(l)
-	t.Cleanup(func() {
-		_ = l.Close()
-		audit.SetDefault(nil)
-	})
-	return ctx, s, cfg, logPath
-}
-
 func insertSuggestionCmd(t *testing.T, ctx context.Context, s *store.Store, fileID int64, diff string) string {
 	t.Helper()
 	id, err := ids.New()
@@ -66,7 +36,8 @@ func insertSuggestionCmd(t *testing.T, ctx context.Context, s *store.Store, file
 }
 
 func TestApplyCmd_HappyPath(t *testing.T) {
-	ctx, s, cfg, logPath := setupApplyCmdEnv(t)
+	env := newTestEnv(t)
+	ctx, s, cfg, logPath := env.Ctx, env.Store, env.Cfg, env.Paths.LogPath
 	ctx = config.WithContext(ctx, cfg)
 
 	fix := filepath.Join(t.TempDir(), "fixture.txt")
@@ -132,7 +103,8 @@ func TestApplyCmd_HappyPath(t *testing.T) {
 }
 
 func TestRejectCmd_SetsStatusAndLogs(t *testing.T) {
-	ctx, s, cfg, logPath := setupApplyCmdEnv(t)
+	env := newTestEnv(t)
+	ctx, s, cfg, logPath := env.Ctx, env.Store, env.Cfg, env.Paths.LogPath
 	ctx = config.WithContext(ctx, cfg)
 
 	fix := filepath.Join(t.TempDir(), "x.txt")
@@ -166,7 +138,8 @@ func TestRejectCmd_SetsStatusAndLogs(t *testing.T) {
 }
 
 func TestLogCmd_FilterSuggestion(t *testing.T) {
-	ctx, s, cfg, _ := setupApplyCmdEnv(t)
+	env := newTestEnv(t)
+	ctx, s, cfg := env.Ctx, env.Store, env.Cfg
 	ctx = config.WithContext(ctx, cfg)
 	l := audit.Default()
 

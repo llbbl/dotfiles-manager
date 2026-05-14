@@ -10,9 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
-	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/llbbl/dotfiles-manager/internal/vcs"
 )
@@ -36,41 +34,18 @@ func newBareRemote(t *testing.T) string {
 
 func TestSync_FirstRunCommitsAndPushes(t *testing.T) {
 	requireGit(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	root := t.TempDir()
 	remote := newBareRemote(t)
-	local := filepath.Join(root, "backup-local")
-	logPath := filepath.Join(root, "logs", "actions.jsonl")
-	statePath := filepath.Join(root, "state.db")
-	backupDir := filepath.Join(root, "backups")
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
-	t.Setenv("HOME", home)
-
-	cfg := &config.Config{
-		Repo:   config.RepoConfig{Remote: remote, Local: local},
-		Log:    config.LogConfig{Path: logPath},
-		State:  config.StateConfig{URL: "file://" + statePath},
-		Backup: config.BackupConfig{Dir: backupDir, MaxTotalMB: 500, RetentionDays: 90},
-	}
-
-	s, err := store.New(ctx, cfg)
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
-	defer s.Close()
-
-	logger, err := audit.New(ctx, cfg, s)
-	if err != nil {
-		t.Fatalf("audit.New: %v", err)
-	}
-	defer func() { _ = logger.Close() }()
-	audit.SetDefault(logger)
-	defer audit.SetDefault(nil)
+	// Build $HOME under a fresh tempdir so it sits outside the env's
+	// tempdir root (sync resolves tracked file paths against $HOME).
+	home := t.TempDir()
+	env := newTestEnv(t,
+		WithHome(home),
+		WithRepoRemote(remote),
+		WithRepoLocal(filepath.Join(t.TempDir(), "backup-local")),
+	)
+	ctx, cancel := context.WithTimeout(env.Ctx, 60*time.Second)
+	defer cancel()
+	cfg, s, logPath, local := env.Cfg, env.Store, env.Paths.LogPath, env.Cfg.Repo.Local
 
 	// InitLocal the backup repo and push an initial commit so origin has refs.
 	repo, err := vcs.InitLocal(ctx, cfg)
