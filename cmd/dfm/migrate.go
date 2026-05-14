@@ -75,6 +75,16 @@ func printMigrateSummary(c *cobra.Command, db *sql.DB, name string, before int64
 			return
 		}
 		if after == before {
+			// PersistentPreRunE's store.New already auto-applies
+			// pending migrations, so by the time we land here
+			// before == after even on a fresh DB. Use the version
+			// peeked BEFORE that auto-migrate to distinguish a
+			// first-run apply from a genuinely idempotent re-run.
+			if preMigrationVersion >= 0 && preMigrationVersion < after {
+				applied := after - preMigrationVersion
+				fmt.Fprintf(out, "dfm migrate: initial migration applied — schema is at version %d (%d applied)\n", after, applied)
+				return
+			}
 			fmt.Fprintf(out, "dfm migrate: already at version %d — nothing to do\n", after)
 			return
 		}

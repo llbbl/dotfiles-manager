@@ -102,6 +102,54 @@ func TestRunMigrations_DebugLevel_RoutesGooseToDlog(t *testing.T) {
 	}
 }
 
+func TestCurrentDBVersionBefore_FreshDBReturnsZero(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
+	cfg := &config.Config{State: config.StateConfig{URL: "file://" + dbPath}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	v, err := CurrentDBVersionBefore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("CurrentDBVersionBefore: %v", err)
+	}
+	if v != 0 {
+		t.Errorf("fresh DB version = %d, want 0", v)
+	}
+}
+
+func TestCurrentDBVersionBefore_AfterMigrationsReturnsLatest(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
+	cfg := &config.Config{State: config.StateConfig{URL: "file://" + dbPath}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// Apply migrations via a separate handle, then peek.
+	db, _, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := RunMigrations(ctx, db); err != nil {
+		_ = db.Close()
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	want, err := CurrentDBVersion(ctx, db)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("CurrentDBVersion: %v", err)
+	}
+	_ = db.Close()
+
+	got, err := CurrentDBVersionBefore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("CurrentDBVersionBefore: %v", err)
+	}
+	if got != want {
+		t.Errorf("peeked version = %d, want %d", got, want)
+	}
+}
+
 func TestCurrentDBVersion_AfterMigrations(t *testing.T) {
 	ctx, db, cleanup := openTestDB(t)
 	defer cleanup()

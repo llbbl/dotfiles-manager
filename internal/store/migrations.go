@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/pressly/goose/v3"
 )
@@ -62,4 +63,38 @@ func CurrentDBVersion(ctx context.Context, db *sql.DB) (int64, error) {
 		return 0, err
 	}
 	return goose.GetDBVersionContext(ctx, db)
+}
+
+// CurrentDBVersionBefore opens cfg, reads the current goose schema
+// version without applying any pending migrations, then closes the
+// connection. Returns 0 (and no error) when the goose_db_version
+// table does not yet exist — i.e. a truly fresh DB. Used by the
+// `dfm migrate up` summary so it can distinguish a first-run apply
+// (which PersistentPreRunE has already performed via store.New) from
+// a genuinely idempotent re-run.
+//
+// This function must not mutate the database: it issues a read-only
+// SELECT and never invokes goose's up/down machinery.
+func CurrentDBVersionBefore(ctx context.Context, cfg *config.Config) (int64, error) {
+	db, _, err := Open(ctx, cfg)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	// Read goose_db_version directly so we don't accidentally
+	// invoke any goose code path that might create the table.
+	var version sql.NullInt64
+	row := db.QueryRowContext(ctx,
+		`SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1`)
+	if err := row.Scan(&version); err != nil {
+		// Most likely: table doesn't exist yet (fresh DB). Treat
+		// any read error as "no schema recorded yet" — callers
+		// only use this signal to refine a UX message.
+		return 0, nil
+	}
+	if !version.Valid {
+		return 0, nil
+	}
+	return version.Int64, nil
 }
