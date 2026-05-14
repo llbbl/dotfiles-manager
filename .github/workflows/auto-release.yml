@@ -57,7 +57,7 @@ jobs:
           if echo "$commits" | grep -qE "^feat(\(.+\))?!?:"; then
             minor=$((minor + 1))
             patch=0
-          elif echo "$commits" | grep -qE "^(fix|perf)(\(.+\))?!?:"; then
+          elif echo "$commits" | grep -qE "^(fix|perf|refactor|chore)(\(.+\))?!?:"; then
             patch=$((patch + 1))
           else
             echo "No release-worthy commits since $latest_tag; skipping."
@@ -114,3 +114,36 @@ jobs:
           args: release --clean --release-notes=RELEASE_NOTES.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-changelog:
+    name: Regenerate CHANGELOG on main
+    needs: [version, release]
+    if: needs.version.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Regenerate CHANGELOG.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --output CHANGELOG.md
+
+      - name: Commit and push
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet CHANGELOG.md; then
+            echo "No CHANGELOG changes to commit."
+            exit 0
+          fi
+          git add CHANGELOG.md
+          git commit -m "chore(release): update CHANGELOG for $TAG"
+          git push origin main
