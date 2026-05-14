@@ -11,6 +11,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -537,7 +538,7 @@ func newAliasAddCmd() *cobra.Command {
 				return err
 			}
 
-			if err := atomicWrite(canonical, newBytes, info.Mode().Perm()); err != nil {
+			if err := fsx.AtomicWrite(canonical, newBytes, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("write %s: %w", canonical, err)
 			}
 
@@ -653,7 +654,7 @@ func newAliasRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			if err := atomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
+			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("write %s: %w", canonical, err)
 			}
 

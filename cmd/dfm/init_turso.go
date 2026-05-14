@@ -13,6 +13,7 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 )
 
@@ -93,33 +94,9 @@ func writeTursoEnvFile(path, token string) error {
 	}
 
 	out := strings.Join(existing, "\n") + "\n"
-	// Write via a temp file + rename so we never expose a half-written
-	// file. The temp file is created with 0600 from the start.
-	tmp, err := os.CreateTemp(dir, ".env.tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod temp: %w", err)
-	}
-	if _, err := tmp.WriteString(out); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename: %w", err)
-	}
-	// Re-assert mode after rename in case umask altered it on some FS.
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("chmod %s: %w", path, err)
-	}
-	return nil
+	// The canonical helper applies mode to the temp file before rename,
+	// so the on-disk file is 0600 from first appearance.
+	return fsx.AtomicWrite(path, []byte(out), 0o600)
 }
 
 // extractTursoToken takes the stdout of `turso db tokens create` and

@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -82,7 +82,7 @@ func newAppendCmd() *cobra.Command {
 				return err
 			}
 
-			if err := atomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
+			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("write %s: %w", canonical, err)
 			}
 
@@ -108,38 +108,3 @@ func newAppendCmd() *cobra.Command {
 	return cmd
 }
 
-// atomicWrite writes data to a temp file in the same dir then renames into
-// place, preserving the given mode. Avoids partial writes on crash.
-func atomicWrite(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("write temp: %w", err)
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("chmod temp: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("sync temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("close temp: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		cleanup()
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
-}

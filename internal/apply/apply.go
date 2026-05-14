@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -242,7 +243,7 @@ func (r *Repo) Apply(ctx context.Context, mgr *snapshot.Manager, id string) (App
 		return ApplyResult{}, &PostSnapshotError{SnapshotID: snap.ID, Err: err}
 	}
 
-	if err := atomicWrite(file.Path, newBytes); err != nil {
+	if err := fsx.AtomicWrite(file.Path, newBytes, 0); err != nil {
 		dlog.From(ctx).Warn("apply failed after snapshot",
 			"suggestion_id", id, "snapshot_id", snap.ID, "err", err.Error())
 		return ApplyResult{}, &PostSnapshotError{SnapshotID: snap.ID, Err: err}
@@ -306,39 +307,6 @@ func diffTargets(fs FileSet, f tracker.File) bool {
 	// out of scope here, but allow it to not break.
 	expect["/dev/null"] = true
 	return expect[fs.OldPath] && expect[fs.NewPath]
-}
-
-// atomicWrite writes data to path via a tmp file + rename, preserving
-// the existing mode bits when the path is already present.
-func atomicWrite(path string, data []byte) error {
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".dotfiles-apply-*")
-	if err != nil {
-		return fmt.Errorf("create tmp: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("close tmp: %w", err)
-	}
-	if err := os.Chmod(tmpName, mode); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("chmod tmp: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
 }
 
 type rowScanner interface {
