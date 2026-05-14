@@ -2,36 +2,34 @@
 
 `dfm` ships as a single static Go binary. The fastest path is to grab a pre-built release from GitHub. If you want to build from source instead, see [Development](./development.md).
 
-## Pick your platform
+## Supported platforms
 
 Releases publish four tarballs and a `checksums.txt`:
 
-| OS    | Architecture | Tarball                                |
-| ----- | ------------ | -------------------------------------- |
-| macOS | Apple Silicon | `dfm_<version>_darwin_arm64.tar.gz`   |
-| macOS | Intel        | `dfm_<version>_darwin_amd64.tar.gz`   |
-| Linux | arm64        | `dfm_<version>_linux_arm64.tar.gz`    |
-| Linux | x86_64       | `dfm_<version>_linux_amd64.tar.gz`    |
+| OS    | Architecture  | Tarball                              |
+| ----- | ------------- | ------------------------------------ |
+| macOS | Apple Silicon | `dfm_<version>_darwin_arm64.tar.gz`  |
+| macOS | Intel         | `dfm_<version>_darwin_amd64.tar.gz`  |
+| Linux | arm64         | `dfm_<version>_linux_arm64.tar.gz`   |
+| Linux | x86_64        | `dfm_<version>_linux_amd64.tar.gz`   |
 
-Find your platform:
-
-```sh
-uname -sm
-# Darwin arm64     -> darwin_arm64
-# Darwin x86_64    -> darwin_amd64
-# Linux  aarch64   -> linux_arm64
-# Linux  x86_64    -> linux_amd64
-```
+The install snippets below auto-detect your platform via `uname` — no manual selection needed.
 
 ## Install (GitHub CLI)
 
-The smoothest path uses [`gh`](https://cli.github.com/). It handles authentication and prefix-matched downloads.
+The smoothest path uses [`gh`](https://cli.github.com/). It handles authentication and prefix-matched downloads. The block below auto-detects your platform and the latest release tag — paste it as-is.
 
 ```sh
-# Pick your platform tag and the version you want
-ASSET=dfm_1.0.0_darwin_arm64.tar.gz
+# Latest release tag (e.g. v1.0.0)
+TAG=$(gh release view --repo llbbl/dotfiles-manager --json tagName -q .tagName)
+VERSION=${TAG#v}
 
-gh release download v1.0.0 \
+# Auto-detect platform
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')                            # darwin | linux
+ARCH=$(uname -m | sed 's/aarch64/arm64/; s/x86_64/amd64/')             # arm64 | amd64
+ASSET=dfm_${VERSION}_${OS}_${ARCH}.tar.gz
+
+gh release download "$TAG" \
   --repo llbbl/dotfiles-manager \
   -p "$ASSET" \
   -p 'checksums.txt' \
@@ -39,7 +37,7 @@ gh release download v1.0.0 \
 
 # Verify the download against the published checksum
 shasum -a 256 -c checksums.txt --ignore-missing
-# expected: dfm_1.0.0_darwin_arm64.tar.gz: OK
+# expected: <asset>: OK
 
 # Extract and install onto your PATH
 tar -xzf "$ASSET"
@@ -51,6 +49,8 @@ which dfm        # expected: /Users/<you>/.local/bin/dfm
 dfm version
 ```
 
+To pin a specific version instead of the latest, replace the first two lines with `TAG=v1.0.0; VERSION=${TAG#v}`.
+
 If `~/.local/bin` is not on your `PATH`, add it to your shell rc:
 
 ```sh
@@ -60,9 +60,17 @@ export PATH="$HOME/.local/bin:$PATH"
 ## Install (curl, no gh)
 
 ```sh
-VERSION=1.0.0
-ASSET=dfm_${VERSION}_darwin_arm64.tar.gz
-BASE=https://github.com/llbbl/dotfiles-manager/releases/download/v${VERSION}
+# Auto-detect platform (same as above)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/aarch64/arm64/; s/x86_64/amd64/')
+
+# Resolve latest tag without gh (follow the redirect from /releases/latest)
+TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+  https://github.com/llbbl/dotfiles-manager/releases/latest | sed 's|.*/||')
+VERSION=${TAG#v}
+
+ASSET=dfm_${VERSION}_${OS}_${ARCH}.tar.gz
+BASE=https://github.com/llbbl/dotfiles-manager/releases/download/${TAG}
 
 curl -fsSLO "$BASE/$ASSET"
 curl -fsSLO "$BASE/checksums.txt"
@@ -73,6 +81,8 @@ mkdir -p ~/.local/bin
 mv dfm ~/.local/bin/dfm
 dfm version
 ```
+
+To pin a version, set `TAG=v1.0.0` and drop the redirect-resolving `curl` line.
 
 Linux: `shasum` is usually available; `sha256sum -c checksums.txt --ignore-missing` works too.
 
