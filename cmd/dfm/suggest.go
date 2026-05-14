@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/ai"
+	"github.com/llbbl/dotfiles-manager/internal/apply"
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/diffrender"
@@ -20,6 +21,11 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
+
+// exitDiffMalformed is returned when the AI provider produces a unified
+// diff that fails to parse. We refuse to persist such suggestions so they
+// can't clog the pending queue.
+const exitDiffMalformed = 3
 
 // exitError is an error carrying a desired process exit code. The root
 // cobra command's wrapper converts it to os.Exit at the very top.
@@ -96,6 +102,26 @@ func newSuggestCmd() *cobra.Command {
 				fields["exit_code"] = code
 				audit.Log(c.Context(), "suggest", fields)
 				return exitf(code, "%v", err)
+			}
+
+			// Validate the diff before persisting. A malformed diff would
+			// otherwise become a permanently-doomed pending row.
+			if _, vErr := apply.Validate(res.Diff); vErr != nil {
+				fields["exit_code"] = exitDiffMalformed
+				fields["error"] = "diff_malformed"
+				audit.Log(c.Context(), "suggest", fields)
+				msg := fmt.Sprintf("provider returned a malformed diff; not saving: %v", vErr)
+				if asJSON {
+					enc := json.NewEncoder(c.OutOrStdout())
+					enc.SetIndent("", "  ")
+					_ = enc.Encode(map[string]any{
+						"error":    "diff_malformed",
+						"message":  vErr.Error(),
+						"provider": prov.Name(),
+					})
+					return &exitError{code: exitDiffMalformed, msg: msg}
+				}
+				return exitf(exitDiffMalformed, "%s", msg)
 			}
 
 			id, idErr := ids.New()
