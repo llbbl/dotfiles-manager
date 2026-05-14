@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,7 +57,7 @@ func newBackupCmd() *cobra.Command {
 			}
 
 			if asJSON {
-				return jsonEncode(c.OutOrStdout(), snapshotJSON(snap))
+				return writeJSON(c.OutOrStdout(), snapshotJSON(snap))
 			}
 			short := snap.Hash
 			if len(short) > 8 {
@@ -110,7 +109,7 @@ func newBackupsCmd() *cobra.Command {
 				for _, sn := range snaps {
 					out = append(out, snapshotJSON(sn))
 				}
-				return jsonEncode(c.OutOrStdout(), out)
+				return writeJSON(c.OutOrStdout(), out)
 			}
 
 			if len(snaps) == 0 {
@@ -175,7 +174,7 @@ func newRestoreCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return jsonEncode(c.OutOrStdout(), map[string]any{
+				return writeJSON(c.OutOrStdout(), map[string]any{
 					"id":   args[0],
 					"dest": dest,
 					"size": n,
@@ -227,7 +226,7 @@ func newPruneCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return jsonEncode(c.OutOrStdout(), map[string]any{
+				return writeJSON(c.OutOrStdout(), map[string]any{
 					"removed":     removed,
 					"bytes_freed": freed,
 					"dry_run":     dryRun,
@@ -261,12 +260,6 @@ func snapshotJSON(sn snapshot.Snapshot) map[string]any {
 		m["file_id"] = *sn.FileID
 	}
 	return m
-}
-
-func jsonEncode(w interface{ Write(p []byte) (int, error) }, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }
 
 func humanBytes(n int64) string {

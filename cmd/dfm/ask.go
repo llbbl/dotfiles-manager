@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -64,9 +63,7 @@ func newAskCmd() *cobra.Command {
 			audit.Log(c.Context(), "ask", fields)
 
 			if asJSON {
-				enc := json.NewEncoder(c.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{
+				return writeJSON(c.OutOrStdout(), map[string]any{
 					"text":        res.Text,
 					"duration_ms": res.Duration.Milliseconds(),
 					"provider":    prov.Name(),

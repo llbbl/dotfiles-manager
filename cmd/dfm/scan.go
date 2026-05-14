@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -33,9 +32,7 @@ func newScanCmd() *cobra.Command {
 			}
 
 			if asJSON {
-				enc := json.NewEncoder(c.OutOrStdout())
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(res); err != nil {
+				if err := writeJSON(c.OutOrStdout(), res); err != nil {
 					return err
 				}
 			} else if !quiet {

@@ -57,7 +57,7 @@ func newRejectCmd() *cobra.Command {
 
 			out := c.OutOrStdout()
 			if asJSON {
-				return jsonEncode(out, map[string]any{"id": id, "status": apply.StatusRejected})
+				return writeJSON(out, map[string]any{"id": id, "status": apply.StatusRejected})
 			}
 			fmt.Fprintf(out, "rejected %s\n", id)
 			return nil

@@ -173,7 +173,7 @@ func newSyncCmd() *cobra.Command {
 
 			if dryRun {
 				if asJSON {
-					return jsonEncode(c.OutOrStdout(), map[string]any{
+					return writeJSON(c.OutOrStdout(), map[string]any{
 						"dry_run":  true,
 						"changes":  changes,
 						"modified": modCount,
@@ -244,7 +244,7 @@ func newSyncCmd() *cobra.Command {
 			dlog.From(ctx).Info("sync run", "files", len(changes), "ahead", ahead, "behind", behind)
 
 			if asJSON {
-				return jsonEncode(c.OutOrStdout(), summary)
+				return writeJSON(c.OutOrStdout(), summary)
 			}
 			if res.Empty {
 				fmt.Fprintln(c.OutOrStdout(), "sync: no changes")
