@@ -102,6 +102,122 @@ func TestApplyCmd_HappyPath(t *testing.T) {
 	}
 }
 
+// TestApplyCmd_PostSnapshotFailure_AuditFields exercises the
+// PostSnapshotError branch of logApplyFailure: the suggestion's diff
+// parses cleanly so a pre-apply snapshot is taken, but the diff does
+// not apply against the on-disk content. The audit row must carry
+// snapshot_id, error_class, exit_code on top of the canonical apply
+// fields, and nothing extra.
+func TestApplyCmd_PostSnapshotFailure_AuditFields(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, s, cfg, logPath := env.Ctx, env.Store, env.Cfg, env.Paths.LogPath
+	ctx = config.WithContext(ctx, cfg)
+
+	fix := filepath.Join(t.TempDir(), "fixture.txt")
+	if err := os.WriteFile(fix, []byte("totally different\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	canonical, display, _ := tracker.Resolve(fix)
+	file, err := tracker.Track(ctx, s, canonical, display, tracker.TrackOptions{SkipSecretCheck: true})
+	if err != nil {
+		t.Fatalf("track: %v", err)
+	}
+	// Valid-looking diff that won't apply: targets `# fixture\nfoo=bar\n`
+	// but the file holds `totally different\n`.
+	diff := "--- a/fixture.txt\n+++ b/fixture.txt\n@@ -1,2 +1,2 @@\n # fixture\n-foo=bar\n+foo=baz\n"
+	id := insertSuggestionCmd(t, ctx, s, file.ID, diff)
+
+	cmd := newApplyCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--yes", id})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected error")
+	}
+
+	entry := findAuditEntry(t, logPath, "apply_failed")
+	for _, k := range []string{"suggestion_id", "file_id", "display_path", "duration_ms", "snapshot_id", "error_class", "exit_code"} {
+		if _, ok := entry[k]; !ok {
+			t.Errorf("missing field %q in audit entry: %v", k, entry)
+		}
+	}
+	if entry["error_class"] != "diff_does_not_apply" {
+		t.Errorf("error_class = %v", entry["error_class"])
+	}
+	if snap, _ := entry["snapshot_id"].(string); snap == "" {
+		t.Error("snapshot_id empty")
+	}
+}
+
+// TestApplyCmd_GenericFailure_AuditFields exercises the non-
+// PostSnapshotError branch: a malformed diff fails before any
+// snapshot is taken. The audit row must NOT carry snapshot_id.
+func TestApplyCmd_GenericFailure_AuditFields(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, s, cfg, logPath := env.Ctx, env.Store, env.Cfg, env.Paths.LogPath
+	ctx = config.WithContext(ctx, cfg)
+
+	fix := filepath.Join(t.TempDir(), "fixture.txt")
+	if err := os.WriteFile(fix, []byte("hi\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	canonical, display, _ := tracker.Resolve(fix)
+	file, _ := tracker.Track(ctx, s, canonical, display, tracker.TrackOptions{SkipSecretCheck: true})
+	// Empty diff -> ErrDiffEmpty, pre-snapshot.
+	id := insertSuggestionCmd(t, ctx, s, file.ID, "")
+
+	cmd := newApplyCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--yes", id})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected error")
+	}
+
+	entry := findAuditEntry(t, logPath, "apply_failed")
+	if _, ok := entry["snapshot_id"]; ok {
+		t.Errorf("generic branch must not carry snapshot_id: %v", entry)
+	}
+	for _, k := range []string{"suggestion_id", "file_id", "display_path", "duration_ms", "error_class", "exit_code"} {
+		if _, ok := entry[k]; !ok {
+			t.Errorf("missing field %q in audit entry: %v", k, entry)
+		}
+	}
+	if entry["error_class"] != "diff_empty" {
+		t.Errorf("error_class = %v", entry["error_class"])
+	}
+}
+
+// findAuditEntry parses the JSONL audit log and returns the payload
+// map for the last entry whose action matches.
+func findAuditEntry(t *testing.T, logPath, action string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	var found map[string]any
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("unmarshal audit line %q: %v", line, err)
+		}
+		if rec["action"] != action {
+			continue
+		}
+		found = rec
+	}
+	if found == nil {
+		t.Fatalf("no audit entry with action=%q in %s", action, data)
+	}
+	return found
+}
+
 func TestRejectCmd_SetsStatusAndLogs(t *testing.T) {
 	env := newTestEnv(t)
 	ctx, s, cfg, logPath := env.Ctx, env.Store, env.Cfg, env.Paths.LogPath
