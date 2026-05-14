@@ -12,13 +12,16 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
-// setupEditCmdEnv mirrors setupApplyCmdEnv but is local to keep
-// edit/append tests independent of the apply suite's lifecycle.
+// setupEditCmdEnv is a thin shim over newTestEnv that pre-attaches the
+// config to the context — the ergonomic shape edit/append/alias tests
+// already depend on. Kept as a named helper because dozens of call
+// sites use this exact 3-value signature; collapsing them all would
+// balloon the diff without simplifying anything.
 func setupEditCmdEnv(t *testing.T) (context.Context, *config.Config, string) {
 	t.Helper()
-	ctx, _, cfg, logPath := setupApplyCmdEnv(t)
-	ctx = config.WithContext(ctx, cfg)
-	return ctx, cfg, logPath
+	env := newTestEnv(t)
+	ctx := config.WithContext(env.Ctx, env.Cfg)
+	return ctx, env.Cfg, env.Paths.LogPath
 }
 
 func writeTracked(t *testing.T, ctx context.Context, contents string) (canonical, display string) {
