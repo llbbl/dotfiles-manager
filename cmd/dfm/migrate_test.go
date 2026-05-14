@@ -96,6 +96,19 @@ func TestMigrateCmd_Up_AlreadyAtCurrentVersion(t *testing.T) {
 	env := newTestEnv(t)
 	cfg := env.Cfg
 	ctx := configWithCtx(env.Ctx, cfg)
+
+	// Simulate "PreRunE peeked at a fully-migrated DB and saw the
+	// same version we already have" — i.e. a genuinely idempotent
+	// re-run. The post-migration version must equal preMigrationVersion
+	// for the "already at version" branch to fire.
+	post, err := store.CurrentDBVersion(ctx, env.Store.DB())
+	if err != nil {
+		t.Fatalf("CurrentDBVersion: %v", err)
+	}
+	prev := preMigrationVersion
+	preMigrationVersion = post
+	t.Cleanup(func() { preMigrationVersion = prev })
+
 	root := newMigrateCmd()
 	root.SetContext(ctx)
 	var out bytes.Buffer
@@ -108,5 +121,42 @@ func TestMigrateCmd_Up_AlreadyAtCurrentVersion(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "already at version") {
 		t.Errorf("expected 'already at version', got:\n%s", got)
+	}
+	if strings.Contains(got, "initial migration applied") {
+		t.Errorf("did not expect initial-migration wording in idempotent run, got:\n%s", got)
+	}
+}
+
+// TestMigrateCmd_Up_FreshDBReportsInitialMigration locks the wording
+// for the case where PersistentPreRunE silently applied the very first
+// migrations against an empty DB. preMigrationVersion == 0 in that
+// case, so the summary must NOT say "nothing to do" — it should
+// surface that an initial migration just landed.
+func TestMigrateCmd_Up_FreshDBReportsInitialMigration(t *testing.T) {
+	env := newTestEnv(t)
+	cfg := env.Cfg
+	ctx := configWithCtx(env.Ctx, cfg)
+
+	// Pin the package-level stash to the fresh-DB sentinel value
+	// PreRunE would have captured before store.New ran goose.
+	prev := preMigrationVersion
+	preMigrationVersion = 0
+	t.Cleanup(func() { preMigrationVersion = prev })
+
+	root := newMigrateCmd()
+	root.SetContext(ctx)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"up"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v\nout: %s", err, out.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "initial migration applied") {
+		t.Errorf("expected 'initial migration applied', got:\n%s", got)
+	}
+	if strings.Contains(got, "nothing to do") {
+		t.Errorf("did not expect 'nothing to do' on fresh DB, got:\n%s", got)
 	}
 }

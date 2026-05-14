@@ -81,6 +81,18 @@ type dlogState struct {
 
 var activeDlog dlogState
 
+// preMigrationVersion captures the goose schema version recorded in
+// the state DB BEFORE PersistentPreRunE's store.New runs pending
+// migrations. The `migrate up` summary inspects this to distinguish a
+// truly idempotent re-run (preMigrationVersion == post-version) from a
+// fresh-DB initial migration that PreRunE silently applied.
+//
+// Sentinel values:
+//   -1: not captured (e.g. config wasn't loaded or peek failed)
+//    0: fresh DB, no goose_db_version rows yet
+//   >0: that schema version was already recorded
+var preMigrationVersion int64 = -1
+
 func main() {
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
@@ -143,6 +155,16 @@ func newRootCmd() *cobra.Command {
 			}
 			dl.Debug("config loaded", "path", path, "backend", cfg.Log.Backend)
 			c.SetContext(config.WithContext(c.Context(), cfg))
+
+			// Peek at the pre-migration schema version before
+			// store.New auto-applies any pending migrations. Failure
+			// here is non-fatal: leave the sentinel -1 so consumers
+			// can fall back to existing messaging.
+			if v, perr := store.CurrentDBVersionBefore(c.Context(), cfg); perr == nil {
+				preMigrationVersion = v
+			} else {
+				preMigrationVersion = -1
+			}
 
 			// Best-effort: build an audit Logger backed by libSQL. If the
 			// store can't open (e.g. `dfm config` before init), keep
