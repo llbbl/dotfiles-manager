@@ -101,3 +101,28 @@ Tests never touch the user's real Turso database or real GitHub repos. State-sto
 ## Filing issues
 
 Use the project's [GitHub issues](https://github.com/llbbl/dotfiles-manager/issues). Each issue is the canonical public record of a piece of work; commits that close one reference it with `Closes #N`.
+
+## Releases
+
+`.github/workflows/auto-release.yml` runs on every push to `main` and bumps the version based on commit prefixes:
+
+| Commit prefix | Bump  |
+| ------------- | ----- |
+| `feat:` (incl. `feat!:`) | minor (`1.x.0`) |
+| `fix:` / `perf:` (incl. `!:`) | patch (`1.0.x`) |
+| `refactor:` / `docs:` / `chore:` / `ci:` / `test:` | none |
+
+**Major version bumps are intentionally NOT triggered by `feat!:` or `BREAKING CHANGE:` footers.** While the project is in rapid-iteration mode, accidentally releasing 2.0 has higher cost than the upside of automatic major bumps. A `feat!:` commit ships as a minor bump; the breaking change should be called out in the PR body and release notes.
+
+To cut a major release manually (when intentional):
+
+```sh
+# Pick the next major version.
+TAG=v2.0.0
+
+# Tag from main after the relevant commits have landed.
+git tag -a "$TAG" -m "Release $TAG"
+git push origin "$TAG"
+```
+
+The release workflow (`.github/workflows/release.yml` via `goreleaser`) picks up the manually-pushed tag and publishes binaries the same way it does for automatic tags.
