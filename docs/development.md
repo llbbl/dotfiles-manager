@@ -109,8 +109,10 @@ Use the project's [GitHub issues](https://github.com/llbbl/dotfiles-manager/issu
 | Commit prefix | Bump  |
 | ------------- | ----- |
 | `feat:` (incl. `feat!:`) | minor (`1.x.0`) |
-| `fix:` / `perf:` (incl. `!:`) | patch (`1.0.x`) |
-| `refactor:` / `docs:` / `chore:` / `ci:` / `test:` | none |
+| `fix:` / `perf:` / `refactor:` / `chore:` (incl. `!:`) | patch (`1.0.x`) |
+| `docs:` / `ci:` / `test:` / `style:` | none |
+
+Note: `chore(release):` head commits are skipped at the workflow's top-level `if:` guard, so the auto-CHANGELOG bot doesn't loop on itself.
 
 **Major version bumps are intentionally NOT triggered by `feat!:` or `BREAKING CHANGE:` footers.** While the project is in rapid-iteration mode, accidentally releasing 2.0 has higher cost than the upside of automatic major bumps. A `feat!:` commit ships as a minor bump; the breaking change should be called out in the PR body and release notes.
 

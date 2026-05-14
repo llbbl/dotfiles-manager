@@ -57,7 +57,7 @@ jobs:
           if echo "$commits" | grep -qE "^feat(\(.+\))?!?:"; then
             minor=$((minor + 1))
             patch=0
-          elif echo "$commits" | grep -qE "^(fix|perf)(\(.+\))?!?:"; then
+          elif echo "$commits" | grep -qE "^(fix|perf|refactor|chore)(\(.+\))?!?:"; then
             patch=$((patch + 1))
           else
             echo "No release-worthy commits since $latest_tag; skipping."
