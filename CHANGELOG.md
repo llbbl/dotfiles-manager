@@ -1,7 +1,12 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [unreleased]
+## [1.3.0] - 2026-05-14
+
+### Features
+
+- changelog: Generate and maintain CHANGELOG.md (#41)
+- state: Orphan prune + state import for cross-DB workflows (#42)
 
 ### Refactoring
 
