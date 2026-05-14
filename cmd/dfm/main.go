@@ -224,6 +224,7 @@ func newRootCmd() *cobra.Command {
 		newBackupsCmd(),
 		newRestoreCmd(),
 		newPruneCmd(),
+		newStateCmd(),
 		newSyncCmd(),
 		newLogCmd(),
 		newAskCmd(),
