@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +14,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/vcs"
+	"github.com/llbbl/dotfiles-manager/internal/wizard"
 	"github.com/spf13/cobra"
 )
 
@@ -22,91 +22,130 @@ const (
 	exitInitNoTTY = 4
 )
 
-// newInitCmd builds the `dfm init` command, which performs
-// first-run setup of the private backup repo: cloning an existing
-// remote, or initializing a new repo and optionally creating the
-// matching private GitHub remote with `gh`. --remote sets the URL,
-// --create-remote provisions it via the GitHub API, and --yes skips
-// interactive confirmations.
+// newInitCmd builds the `dfm init` command, which drives the
+// interactive first-run wizard. The wizard scaffolds the config file,
+// optionally provisions a Turso libSQL state DB, optionally clones or
+// creates the backup repo, and optionally tracks an initial file.
+//
+// Every chapter has a corresponding flag for non-interactive use; the
+// older --remote / --create-remote / --turso flags from the pre-wizard
+// implementation continue to work and short-circuit their chapters.
 func newInitCmd() *cobra.Command {
 	var (
-		remoteFlag   string
-		createRemote bool
-		yes          bool
-		tursoFlag    bool
-		tursoDBName  string
+		remoteFlag     string
+		createRemote   bool
+		yes            bool
+		force          bool
+		printOnly      bool
+		tursoFlag      bool
+		tursoDBName    string
+		tursoURL       string
+		tursoAuthToken string
+		stateFlag      string
+		aiBin          string
+		aiModel        string
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "First-run setup: clone or create the private backup repo",
+		Short: "First-run setup wizard: scaffold config, state store, and backup repo",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			cfg := config.FromContext(c.Context())
-			if cfg == nil {
-				return errors.New("config not loaded")
+			ctx := c.Context()
+
+			// Resolve the destination config path: --config wins, else
+			// the XDG default. The wizard re-derives this for its own
+			// chapter but we need the same value here to decide whether
+			// to enter edit mode.
+			cfgPath := flagConfigPath
+			if cfgPath == "" {
+				p, err := config.DefaultPath()
+				if err != nil {
+					return err
+				}
+				cfgPath = p
 			}
 
-			// Determine whether the user asked for the repo flow.
-			// Repo flow is requested when --remote, --create-remote, or
-			// a non-empty [repo].remote in config is present. --turso
-			// alone bypasses the repo flow entirely.
-			repoRequested := remoteFlag != "" || createRemote || cfg.Repo.Remote != ""
+			existing, err := wizard.LoadExisting(cfgPath)
+			if err != nil {
+				return err
+			}
 
-			runRepoFlow := func() error {
-				if remoteFlag != "" {
-					cfg.Repo.Remote = remoteFlag
+			plan, err := wizard.Run(wizard.Options{
+				ConfigPath:     cfgPath,
+				Yes:            yes,
+				Force:          force,
+				Print:          printOnly,
+				State:          stateFlag,
+				RemoteURL:      remoteFlag,
+				CreateRemote:   createRemote,
+				Turso:          tursoFlag,
+				TursoDBName:    tursoDBName,
+				TursoURL:       tursoURL,
+				TursoAuthToken: tursoAuthToken,
+				AIBin:          aiBin,
+				AIModel:        aiModel,
+				In:             os.Stdin,
+				Out:            c.OutOrStdout(),
+			}, existing)
+			if err != nil {
+				return err
+			}
+
+			if printOnly {
+				return nil
+			}
+
+			// Re-load the freshly-written config so downstream side
+			// effects observe what the user just wrote (the cobra
+			// context's cfg was populated from the OLD config — likely
+			// Defaults() — at PersistentPreRunE time).
+			cfg, err := config.Load(plan.ConfigPath)
+			if err != nil {
+				return err
+			}
+
+			if plan.ProvisionTurso {
+				if err := runTursoInit(ctx, cfg, plan.ConfigPath, plan.TursoDBName); err != nil {
+					return err
 				}
-				if cfg.Repo.Remote == "" {
-					fmt.Fprintln(c.ErrOrStderr(), "init: --remote (or [repo].remote) is required")
-					os.Exit(exitResolveErr)
+				// runTursoInit re-saves config.toml with the URL; reload.
+				cfg, err = config.Load(plan.ConfigPath)
+				if err != nil {
+					return err
 				}
+			}
+
+			if plan.RepoFlow {
 				if cfg.Repo.Local == "" {
 					fmt.Fprintln(c.ErrOrStderr(), "init: [repo].local is empty")
 					os.Exit(exitResolveErr)
 				}
-				return runRepoInit(c, cfg, createRemote, yes)
-			}
-
-			runTursoFlow := func() error {
-				name := tursoDBName
-				if name == "" {
-					name = "dotfiles-state"
-				}
-				path := flagConfigPath
-				if path == "" {
-					p, err := config.DefaultPath()
-					if err != nil {
-						return err
-					}
-					path = p
-				}
-				return runTursoInit(c.Context(), cfg, path, name)
-			}
-
-			// Neither: existing error path.
-			if !repoRequested && !tursoFlag {
-				fmt.Fprintln(c.ErrOrStderr(), "init: --remote (or [repo].remote) is required")
-				os.Exit(exitResolveErr)
-			}
-
-			if repoRequested {
-				if err := runRepoFlow(); err != nil {
+				if err := runRepoInit(c, cfg, plan.CreateRemote, yes); err != nil {
 					return err
 				}
 			}
-			if tursoFlag {
-				if err := runTursoFlow(); err != nil {
-					return err
-				}
+
+			if plan.TrackPath != "" {
+				fmt.Fprintf(c.OutOrStdout(),
+					"  (skipping inline track of %s — run `dfm track %s` to add it)\n",
+					plan.TrackPath, plan.TrackPath)
 			}
+
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&remoteFlag, "remote", "", "remote git URL (overrides [repo].remote)")
 	cmd.Flags().BoolVar(&createRemote, "create-remote", false, "create the remote via gh if it doesn't exist")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip the gh-create confirmation")
-	cmd.Flags().BoolVar(&tursoFlag, "turso", false, "set up a Turso libSQL remote DB (orthogonal to repo flow)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "non-interactive: accept all defaults")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing config without edit-mode pre-fills")
+	cmd.Flags().BoolVar(&printOnly, "print", false, "render the would-be config to stdout, write nothing")
+	cmd.Flags().BoolVar(&tursoFlag, "turso", false, "set up a Turso libSQL remote DB (state-store chapter)")
 	cmd.Flags().StringVar(&tursoDBName, "turso-db-name", "dotfiles-state", "Turso DB name to create or reuse")
+	cmd.Flags().StringVar(&tursoURL, "turso-url", "", "libsql:// URL to bake into the config (skips provisioning)")
+	cmd.Flags().StringVar(&tursoAuthToken, "turso-auth-token", "", "Turso auth token to bake into the config")
+	cmd.Flags().StringVar(&stateFlag, "state", "", "state store: local|turso (selects the state chapter branch)")
+	cmd.Flags().StringVar(&aiBin, "ai-bin", "", "path to the Claude Code binary (overrides the AI chapter)")
+	cmd.Flags().StringVar(&aiModel, "ai-model", "", "AI model name (overrides the AI chapter)")
 	return cmd
 }
 
