@@ -274,11 +274,6 @@ func ResolveSentinelHunks(fs *FileSet, orig []byte) error {
 			}
 			if ok {
 				matches = append(matches, start+1)
-				if len(matches) > 1 {
-					// Don't bother scanning further than we need to
-					// produce a useful "ambiguous" message — but keep
-					// scanning so we can name every candidate.
-				}
 			}
 		}
 		switch len(matches) {
