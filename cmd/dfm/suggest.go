@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -112,9 +111,7 @@ func newSuggestCmd() *cobra.Command {
 				audit.Log(c.Context(), "suggest", fields)
 				msg := fmt.Sprintf("provider returned a malformed diff; not saving: %v", vErr)
 				if asJSON {
-					enc := json.NewEncoder(c.OutOrStdout())
-					enc.SetIndent("", "  ")
-					_ = enc.Encode(map[string]any{
+					_ = writeJSON(c.OutOrStdout(), map[string]any{
 						"error":    "diff_malformed",
 						"message":  vErr.Error(),
 						"provider": prov.Name(),
@@ -144,9 +141,7 @@ func newSuggestCmd() *cobra.Command {
 			audit.Log(c.Context(), "suggest", fields)
 
 			if asJSON {
-				enc := json.NewEncoder(c.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{
+				return writeJSON(c.OutOrStdout(), map[string]any{
 					"id":         id,
 					"summary":    res.Summary,
 					"diff":       res.Diff,
@@ -224,4 +219,3 @@ func renderPromptForRecord(f tracker.File, goal string) string {
 	b.WriteString(g)
 	return b.String()
 }
-
