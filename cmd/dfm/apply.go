@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -105,25 +106,7 @@ func newApplyCmd() *cobra.Command {
 
 			if err != nil {
 				code := classifyApplyExit(err)
-				var pse *apply.PostSnapshotError
-				if errors.As(err, &pse) {
-					failFields := map[string]any{
-						"suggestion_id": id,
-						"file_id":       file.ID,
-						"display_path":  file.DisplayPath,
-						"snapshot_id":   pse.SnapshotID,
-						"error_class":   classifyApplyError(pse.Err),
-						"duration_ms":   dur,
-						"exit_code":     code,
-					}
-					audit.Log(ctx, "apply_failed", failFields)
-				} else {
-					ff := map[string]any{}
-					maps.Copy(ff, baseFields)
-					ff["error_class"] = classifyApplyError(err)
-					ff["exit_code"] = code
-					audit.Log(ctx, "apply_failed", ff)
-				}
+				logApplyFailure(ctx, baseFields, err, code)
 				return exitf(code, "%v", err)
 			}
 
@@ -151,6 +134,26 @@ func newApplyCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit ApplyResult as JSON")
 	return cmd
+}
+
+// logApplyFailure emits the apply_failed audit row, branching on
+// PostSnapshotError to attach snapshot_id and unwrap the inner error
+// for classification. base must contain the canonical apply fields
+// (suggestion_id, file_id, display_path, duration_ms). The helper
+// merges error_class + exit_code (and optionally snapshot_id) over
+// a fresh copy without mutating base.
+func logApplyFailure(ctx context.Context, base map[string]any, err error, code int) {
+	fields := map[string]any{}
+	maps.Copy(fields, base)
+	classifyErr := err
+	var pse *apply.PostSnapshotError
+	if errors.As(err, &pse) {
+		fields["snapshot_id"] = pse.SnapshotID
+		classifyErr = pse.Err
+	}
+	fields["error_class"] = classifyApplyError(classifyErr)
+	fields["exit_code"] = code
+	audit.Log(ctx, "apply_failed", fields)
 }
 
 func parseGoal(prompt string) string {
