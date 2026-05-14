@@ -111,6 +111,58 @@ func TestBuildArgs(t *testing.T) {
 	}
 }
 
+func TestRenderSuggestPrompt_IncludesHunkHeaderSchema(t *testing.T) {
+	in := SuggestInput{
+		File:    tracker.File{DisplayPath: "~/.zshrc"},
+		Content: []byte("foo=bar\n"),
+		Goal:    "tighten quoting",
+	}
+	got := renderSuggestPrompt(in)
+
+	// Existing prompt-shape assertions stay valid.
+	for _, want := range []string{
+		"---SUMMARY---",
+		"---DIFF---",
+		"---END---",
+		"a/~/.zshrc",
+		"b/~/.zshrc",
+		"tighten quoting",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q\n---\n%s", want, got)
+		}
+	}
+
+	// New: explicit hunk-header schema must be present.
+	schema := "`@@ -<old-start>,<old-count> +<new-start>,<new-count> @@`"
+	if !strings.Contains(got, schema) {
+		t.Errorf("prompt missing hunk-header schema %q\n---\n%s", schema, got)
+	}
+	if !strings.Contains(got, "bare `@@`") {
+		t.Errorf("prompt should call out that a bare @@ line is invalid\n---\n%s", got)
+	}
+
+	// New: worked example with real numbers must be present.
+	if !strings.Contains(got, "@@ -10,3 +10,3 @@") {
+		t.Errorf("prompt missing worked example header `@@ -10,3 +10,3 @@`\n---\n%s", got)
+	}
+	for _, want := range []string{
+		" unchanged line 10",
+		"-old line 11",
+		"+new line 11",
+		" unchanged line 12",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing worked-example line %q\n---\n%s", want, got)
+		}
+	}
+
+	// New: no-markdown-fences guidance retained.
+	if !strings.Contains(got, "no surrounding fences") && !strings.Contains(got, "no markdown code fences") {
+		t.Errorf("prompt should still forbid markdown fences around the diff\n---\n%s", got)
+	}
+}
+
 func mustJSON(v map[string]any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
