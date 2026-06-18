@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 )
@@ -292,41 +291,9 @@ func TestFindPathManagedEntries_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestPathStubSubcommands(t *testing.T) {
-	// `add` shipped in dfm-5w3 and is no longer a stub; the remove/list
-	// stubs are still owned by dfm-2bl / dfm-5mq and must still exit
-	// exitResolveErr with the beads-pointing message.
-	cases := []struct {
-		name string
-		args []string
-	}{
-		{"remove", []string{"remove", "/tmp/x"}},
-		{"list", []string{"list"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := newPathCmd()
-			cmd.SetArgs(tc.args)
-			// Silence cobra's auto-print of the error.
-			cmd.SetOut(&strings.Builder{})
-			cmd.SetErr(&strings.Builder{})
-			err := cmd.Execute()
-			if err == nil {
-				t.Fatalf("stub %s returned nil error", tc.name)
-			}
-			ee, ok := err.(*exitError)
-			if !ok {
-				t.Fatalf("stub %s returned %T, want *exitError", tc.name, err)
-			}
-			if ee.code != exitResolveErr {
-				t.Errorf("stub %s code = %d, want %d", tc.name, ee.code, exitResolveErr)
-			}
-			if !strings.Contains(ee.msg, "not implemented yet") {
-				t.Errorf("stub %s message lacks 'not implemented yet': %q", tc.name, ee.msg)
-			}
-		})
-	}
-}
+// Stubs were retired in dfm-mxf / dfm-2bl / dfm-5mq. The corresponding
+// behavior is now covered by path_add_fish_test.go, path_remove_test.go,
+// and path_list_test.go.
 
 // equalStrings is a tiny helper to compare two string slices by value.
 // Avoids pulling in a dep for one line.
