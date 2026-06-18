@@ -293,13 +293,13 @@ func TestFindPathManagedEntries_EmptyInput(t *testing.T) {
 }
 
 func TestPathStubSubcommands(t *testing.T) {
-	// All three stubs should exit with exitResolveErr and a message
-	// pointing at the beads issues that own the real implementations.
+	// `add` shipped in dfm-5w3 and is no longer a stub; the remove/list
+	// stubs are still owned by dfm-2bl / dfm-5mq and must still exit
+	// exitResolveErr with the beads-pointing message.
 	cases := []struct {
 		name string
 		args []string
 	}{
-		{"add", []string{"add", "/tmp/x"}},
 		{"remove", []string{"remove", "/tmp/x"}},
 		{"list", []string{"list"}},
 	}
