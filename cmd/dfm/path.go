@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -8,9 +9,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/secrets"
+	"github.com/llbbl/dotfiles-manager/internal/snapshot"
+	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -311,6 +317,56 @@ func newPathCmd() *cobra.Command {
 // users (and future maintainers) know where the work lives.
 const pathStubMsg = "dfm path %s: not implemented yet — see beads dfm-5w3 / dfm-mxf / dfm-2bl / dfm-5mq"
 
+// pathFishStubMsg is surfaced when the user explicitly targets fish via
+// --shell=fish or a .fish file path. Fish rendering is its own task
+// (dfm-mxf); until that lands, error cleanly rather than emitting
+// malformed bash syntax into a fish config.
+const pathFishStubMsg = "dfm path: fish shell support not implemented yet — see beads dfm-mxf"
+
+// buildBashZshExportLine returns the per-iteration PATH assignment that
+// goes inside the case fallthrough — prepending or appending the loop
+// variable depending on direction. The double-quoted form survives word
+// splitting on directories that contain spaces.
+func buildBashZshExportLine(direction string) string {
+	if direction == pathDirectionAppend {
+		return `PATH="$PATH:$__dfm_d"`
+	}
+	return `PATH="$__dfm_d:$PATH"`
+}
+
+// renderPathBlockBashZsh emits the full managed entry — both markers
+// and the for/case/done body — with a trailing newline after the close
+// marker so callers can splice the result directly into a file.
+//
+// v1 constraint: dir tokens are well-formed shell words (no spaces, no
+// ':', no shell metacharacters). The for-loop body emits them
+// space-separated, unquoted; the marker comment emits them
+// colon-separated regardless of shell (canonical per spec §5.1).
+func renderPathBlockBashZsh(id string, updatedAt time.Time, direction string, dirs []string) string {
+	var b strings.Builder
+	b.WriteString(formatPathOpenMarker(id, updatedAt, direction, dirs))
+	b.WriteByte('\n')
+	fmt.Fprintf(&b, "for __dfm_d in %s; do\n", strings.Join(dirs, " "))
+	b.WriteString("  case \":$PATH:\" in\n")
+	b.WriteString("    *\":$__dfm_d:\"*) ;;\n")
+	fmt.Fprintf(&b, "    *) %s ;;\n", buildBashZshExportLine(direction))
+	b.WriteString("  esac\n")
+	b.WriteString("done\n")
+	b.WriteString("unset __dfm_d\n")
+	b.WriteString("export PATH\n")
+	b.WriteString(formatPathCloseMarker(id))
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// isFishTarget reports whether the resolved target is for fish — either
+// the user passed --shell=fish (yielding family "fish" from
+// shellFamily) or --file pointed at a .fish file (also "fish"). Used
+// by `dfm path add` to fail fast with the dfm-mxf hint.
+func isFishTarget(family string) bool {
+	return family == "fish"
+}
+
 func newPathAddCmd() *cobra.Command {
 	var (
 		shellFlag string
@@ -320,10 +376,198 @@ func newPathAddCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "add <dir>",
-		Short: "Add a directory to the dfm-managed PATH entry (stub)",
+		Short: "Add a directory to the dfm-managed PATH entry",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return exitf(exitResolveErr, pathStubMsg, "add")
+		RunE: func(c *cobra.Command, args []string) error {
+			dir := args[0]
+			if dir == "" {
+				return exitf(exitResolveErr, "path add: <dir> must not be empty")
+			}
+			// Strict mutex: alias add tolerates both flags together; the
+			// path-cmd spec (§4.1) deliberately diverges.
+			if shellFlag != "" && fileFlag != "" {
+				return exitf(exitResolveErr,
+					"path add: --shell and --file are mutually exclusive")
+			}
+
+			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
+			if err != nil {
+				return err
+			}
+			if isFishTarget(family) {
+				return exitf(exitResolveErr, pathFishStubMsg)
+			}
+
+			direction := pathDirectionPrepend
+			if appendDir {
+				direction = pathDirectionAppend
+			}
+
+			s, err := openStore(c.Context())
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+
+			file, canonical, err := resolveTracked(c.Context(), s, target)
+			if err != nil {
+				fmt.Fprintf(c.ErrOrStderr(),
+					"not tracked: %s. Run: dfm track %s\n", target, target)
+				os.Exit(exitAlreadyOrMiss)
+			}
+
+			current, err := os.ReadFile(canonical)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", canonical, err)
+			}
+			info, err := os.Stat(canonical)
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", canonical, err)
+			}
+
+			// Locate every managed entry and partition by direction.
+			entries := findPathManagedEntries(current)
+			var matching []PathManagedEntry
+			for _, e := range entries {
+				if e.Marker.Direction == direction {
+					matching = append(matching, e)
+				}
+			}
+			// Corruption guard (§5.4 / §7 case #19): more than one
+			// managed entry for the same direction means a manual edit
+			// went wrong. Refuse to auto-merge.
+			if len(matching) > 1 {
+				return exitf(exitResolveErr,
+					"multiple dfm-managed %s entries found in %s; please inspect and clean up manually",
+					direction, file.DisplayPath)
+			}
+
+			var (
+				existing       *PathManagedEntry
+				existingDirs   []string
+				markerIDOld    string
+			)
+			if len(matching) == 1 {
+				existing = &matching[0]
+				existingDirs = append(existingDirs, existing.Marker.Dirs...)
+				markerIDOld = existing.Marker.ID
+			}
+
+			// Dedup against existing dirs in this direction using
+			// normalized comparison; the user's literal token is what
+			// gets persisted.
+			needle := normalizePathDir(dir)
+			for _, d := range existingDirs {
+				if normalizePathDir(d) == needle {
+					return exitf(exitAlreadyOrMiss,
+						"%q already managed in %s entry of %s",
+						dir, direction, file.DisplayPath)
+				}
+			}
+
+			newDirs := append([]string{}, existingDirs...)
+			newDirs = append(newDirs, dir)
+
+			// Secret scan on the dir token. Mirror alias add's UX: print
+			// a tab-separated table on stderr, exit exitSecretsErr
+			// unless --force is set. --force does NOT bypass dedup.
+			res, scanErr := secrets.ScanReader(bytes.NewReader([]byte(dir)))
+			if scanErr != nil {
+				return fmt.Errorf("secret scan: %w", scanErr)
+			}
+			secretFlagged := !res.Skipped && len(res.Findings) > 0
+			if secretFlagged {
+				if !force {
+					tw := tabwriter.NewWriter(c.ErrOrStderr(), 0, 0, 2, ' ', 0)
+					fmt.Fprintln(tw, "RULE\tLINE\tEXCERPT")
+					for _, fi := range res.Findings {
+						fmt.Fprintf(tw, "%s\t%d\t%s\n", fi.Rule, fi.Line, fi.Excerpt)
+					}
+					tw.Flush()
+					fmt.Fprintln(c.ErrOrStderr(),
+						"path add aborted: secrets detected (--force to override)")
+					os.Exit(exitSecretsErr)
+				}
+				fmt.Fprintf(c.ErrOrStderr(),
+					"warning: %d secret finding(s) in dir token; proceeding due to --force\n",
+					len(res.Findings))
+			}
+
+			// Snapshot first, mirroring alias add. ReasonPreEdit comes
+			// from TakePreEdit — matches the repo convention for
+			// mutation commands.
+			mgr, mgrErr := newSnapshotManager(c.Context(), s)
+			if mgrErr != nil {
+				return fmt.Errorf("snapshot manager: %w", mgrErr)
+			}
+			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
+			if err != nil {
+				return err
+			}
+
+			newID := pathMarkerID(direction, newDirs)
+			block := renderPathBlockBashZsh(newID, time.Now().UTC(), direction, newDirs)
+
+			var newContent []byte
+			if existing != nil {
+				// In-place splice: replace the old block bytes with the
+				// new block. BlockEnd already includes the trailing
+				// newline if there was one — renderPathBlockBashZsh
+				// always emits a trailing newline, so byte semantics
+				// line up.
+				newContent = make([]byte, 0, len(current)-(existing.BlockEnd-existing.BlockStart)+len(block))
+				newContent = append(newContent, current[:existing.BlockStart]...)
+				newContent = append(newContent, block...)
+				newContent = append(newContent, current[existing.BlockEnd:]...)
+			} else {
+				// Append at EOF. Ensure exactly one blank line of
+				// breathing room before the block when the file has
+				// existing content — readability matches what installer
+				// snippets do.
+				newContent = make([]byte, 0, len(current)+len(block)+2)
+				newContent = append(newContent, current...)
+				if len(current) > 0 {
+					if !bytes.HasSuffix(current, []byte("\n")) {
+						newContent = append(newContent, '\n')
+					}
+					if !bytes.HasSuffix(newContent, []byte("\n\n")) {
+						newContent = append(newContent, '\n')
+					}
+				}
+				newContent = append(newContent, block...)
+			}
+
+			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("write %s: %w", canonical, err)
+			}
+
+			sum := sha256.Sum256(newContent)
+			newHash := hex.EncodeToString(sum[:])
+
+			subAction := "add"
+			if force && secretFlagged {
+				subAction = "force-add"
+			}
+
+			// Privacy note: alias add deliberately omits the alias body
+			// from audit. The dir token is the audited unit here; it's
+			// already public-facing (it lives in PATH at runtime), so
+			// recording it lets audit consumers reconstruct the
+			// transition without re-reading the rc file.
+			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.add", map[string]any{
+				"dir":             dir,
+				"direction":       direction,
+				"marker_id_new":   newID,
+				"marker_id_old":   markerIDOld,
+				"snapshot_id":     snap.ID,
+				"sub_action":      subAction,
+			}); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(c.OutOrStdout(),
+				"added %q to %s entry in %s\n", dir, direction, file.DisplayPath)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
