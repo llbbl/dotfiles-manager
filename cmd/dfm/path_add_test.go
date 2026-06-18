@@ -514,53 +514,6 @@ func TestPathAdd_CorruptionGuardMultipleSameDirection(t *testing.T) {
 	}
 }
 
-// --shell=fish errors with the dfm-mxf hint: §7 case #13 regression.
-func TestPathAdd_FishShellRejected(t *testing.T) {
-	ctx, _, _ := setupEditCmdEnv(t)
-	// Tracking a file isn't even required — the fish guard fires before
-	// resolveTracked. Pass a bogus --file to make sure --shell=fish is
-	// what surfaces, but we still need a real path that --file accepts.
-	canonical, _ := writeTracked(t, ctx, "")
-	_ = canonical
-
-	cmd := newPathCmd()
-	cmd.SetContext(ctx)
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"add", "--shell", "fish", "/a"})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("expected fish-shell error, got nil")
-	}
-	var ee *exitError
-	if !errors.As(err, &ee) || ee.code != exitResolveErr {
-		t.Fatalf("want exitError(code=%d), got %v", exitResolveErr, err)
-	}
-	if !strings.Contains(ee.msg, "dfm-mxf") {
-		t.Errorf("error message lacks 'dfm-mxf' hint: %q", ee.msg)
-	}
-}
-
-// --file=*.fish also routes through the fish guard.
-func TestPathAdd_FishFileRejected(t *testing.T) {
-	ctx, _, _ := setupEditCmdEnv(t)
-	// Write a .fish file and track it so --file resolves.
-	canonical, _ := writeTrackedNamed(t, ctx, "config.fish", "")
-
-	cmd := newPathCmd()
-	cmd.SetContext(ctx)
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"add", "--file", canonical, "/a"})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("expected fish-file error, got nil")
-	}
-	var ee *exitError
-	if !errors.As(err, &ee) || ee.code != exitResolveErr {
-		t.Fatalf("want exitError(code=%d), got %v", exitResolveErr, err)
-	}
-	if !strings.Contains(ee.msg, "dfm-mxf") {
-		t.Errorf("error message lacks 'dfm-mxf' hint: %q", ee.msg)
-	}
-}
+// Fish targets are first-class as of dfm-mxf. Positive fish-flow
+// coverage now lives in path_add_fish_test.go; this stub is left as a
+// breadcrumb so future grep'rs find their way.

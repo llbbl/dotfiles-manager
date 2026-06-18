@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -312,17 +313,6 @@ func newPathCmd() *cobra.Command {
 	return cmd
 }
 
-// pathStubMsg is the error returned by every stub subcommand. The
-// message names the beads issue tracking the real implementation so
-// users (and future maintainers) know where the work lives.
-const pathStubMsg = "dfm path %s: not implemented yet — see beads dfm-5w3 / dfm-mxf / dfm-2bl / dfm-5mq"
-
-// pathFishStubMsg is surfaced when the user explicitly targets fish via
-// --shell=fish or a .fish file path. Fish rendering is its own task
-// (dfm-mxf); until that lands, error cleanly rather than emitting
-// malformed bash syntax into a fish config.
-const pathFishStubMsg = "dfm path: fish shell support not implemented yet — see beads dfm-mxf"
-
 // buildBashZshExportLine returns the per-iteration PATH assignment that
 // goes inside the case fallthrough — prepending or appending the loop
 // variable depending on direction. The double-quoted form survives word
@@ -359,12 +349,47 @@ func renderPathBlockBashZsh(id string, updatedAt time.Time, direction string, di
 	return b.String()
 }
 
-// isFishTarget reports whether the resolved target is for fish — either
-// the user passed --shell=fish (yielding family "fish" from
-// shellFamily) or --file pointed at a .fish file (also "fish"). Used
-// by `dfm path add` to fail fast with the dfm-mxf hint.
-func isFishTarget(family string) bool {
-	return family == "fish"
+// buildFishSetLine returns the fish `set -gx PATH ...` assignment that
+// runs inside the `if not contains` guard. For prepend, the new dir
+// comes before the existing PATH; for append, it comes after.
+func buildFishSetLine(direction string) string {
+	if direction == pathDirectionAppend {
+		return "set -gx PATH $PATH $__dfm_d"
+	}
+	return "set -gx PATH $__dfm_d $PATH"
+}
+
+// renderPathBlockFish emits the full managed entry in fish syntax —
+// see spec §5.3. As with the bash/zsh renderer, the marker comment's
+// `dirs=` is colon-separated regardless of shell (canonical, comment-
+// only); the for-loop body uses space-separated dirs because fish
+// syntax requires it.
+//
+// 4-space indentation inside `for…end` is the fish convention.
+func renderPathBlockFish(id string, updatedAt time.Time, direction string, dirs []string) string {
+	var b strings.Builder
+	b.WriteString(formatPathOpenMarker(id, updatedAt, direction, dirs))
+	b.WriteByte('\n')
+	fmt.Fprintf(&b, "for __dfm_d in %s\n", strings.Join(dirs, " "))
+	b.WriteString("    if not contains -- $__dfm_d $PATH\n")
+	fmt.Fprintf(&b, "        %s\n", buildFishSetLine(direction))
+	b.WriteString("    end\n")
+	b.WriteString("end\n")
+	b.WriteString("set -e __dfm_d\n")
+	b.WriteString(formatPathCloseMarker(id))
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// renderPathBlock dispatches to the correct shell-specific renderer
+// based on the resolved target family ("fish" or "posix"). This is the
+// single seam the add/remove commands use so the dispatch lives in one
+// place.
+func renderPathBlock(family, id string, updatedAt time.Time, direction string, dirs []string) string {
+	if family == "fish" {
+		return renderPathBlockFish(id, updatedAt, direction, dirs)
+	}
+	return renderPathBlockBashZsh(id, updatedAt, direction, dirs)
 }
 
 func newPathAddCmd() *cobra.Command {
@@ -393,9 +418,6 @@ func newPathAddCmd() *cobra.Command {
 			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
 			if err != nil {
 				return err
-			}
-			if isFishTarget(family) {
-				return exitf(exitResolveErr, pathFishStubMsg)
 			}
 
 			direction := pathDirectionPrepend
@@ -506,7 +528,7 @@ func newPathAddCmd() *cobra.Command {
 			}
 
 			newID := pathMarkerID(direction, newDirs)
-			block := renderPathBlockBashZsh(newID, time.Now().UTC(), direction, newDirs)
+			block := renderPathBlock(family, newID, time.Now().UTC(), direction, newDirs)
 
 			var newContent []byte
 			if existing != nil {
@@ -584,15 +606,181 @@ func newPathRemoveCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "remove <dir>",
-		Short: "Remove a directory from the dfm-managed PATH entry (stub)",
+		Short: "Remove a directory from the dfm-managed PATH entry",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return exitf(exitResolveErr, pathStubMsg, "remove")
+		RunE: func(c *cobra.Command, args []string) error {
+			dir := args[0]
+			if dir == "" {
+				return exitf(exitResolveErr, "path remove: <dir> must not be empty")
+			}
+			if shellFlag != "" && fileFlag != "" {
+				return exitf(exitResolveErr,
+					"path remove: --shell and --file are mutually exclusive")
+			}
+
+			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
+			if err != nil {
+				return err
+			}
+
+			s, err := openStore(c.Context())
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+
+			file, canonical, err := resolveTracked(c.Context(), s, target)
+			if err != nil {
+				fmt.Fprintf(c.ErrOrStderr(),
+					"not tracked: %s. Run: dfm track %s\n", target, target)
+				os.Exit(exitAlreadyOrMiss)
+			}
+
+			current, err := os.ReadFile(canonical)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", canonical, err)
+			}
+			info, err := os.Stat(canonical)
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", canonical, err)
+			}
+
+			// Search all managed entries (both directions). First match wins.
+			needle := normalizePathDir(dir)
+			entries := findPathManagedEntries(current)
+			var (
+				matchedEntry *PathManagedEntry
+				matchedIdx   = -1
+			)
+			for i := range entries {
+				e := &entries[i]
+				for j, d := range e.Marker.Dirs {
+					if normalizePathDir(d) == needle {
+						matchedEntry = e
+						matchedIdx = j
+						break
+					}
+				}
+				if matchedEntry != nil {
+					break
+				}
+			}
+			if matchedEntry == nil {
+				// Not managed: clean exit, no mutation, no snapshot, no audit.
+				return exitf(exitAlreadyOrMiss, "not managed by dfm: %s", dir)
+			}
+
+			direction := matchedEntry.Marker.Direction
+			markerIDOld := matchedEntry.Marker.ID
+			// Splice out the matched dir from the entry's dirs list.
+			newDirs := make([]string, 0, len(matchedEntry.Marker.Dirs)-1)
+			newDirs = append(newDirs, matchedEntry.Marker.Dirs[:matchedIdx]...)
+			newDirs = append(newDirs, matchedEntry.Marker.Dirs[matchedIdx+1:]...)
+
+			// Snapshot before mutation. ReasonPreEdit matches the
+			// add-flow convention.
+			mgr, mgrErr := newSnapshotManager(c.Context(), s)
+			if mgrErr != nil {
+				return fmt.Errorf("snapshot manager: %w", mgrErr)
+			}
+			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
+			if err != nil {
+				return err
+			}
+
+			var (
+				newContent   []byte
+				markerIDNew  string
+				entryDeleted bool
+			)
+			if len(newDirs) == 0 {
+				// Drain entire block. If the byte preceding BlockStart is
+				// a newline AND the byte after BlockEnd is also a newline,
+				// we'd leave a doubled blank line — trim one to keep the
+				// file tidy. We only trim if the file had a separator blank
+				// line before the block (mirroring how add adds one).
+				entryDeleted = true
+				start := matchedEntry.BlockStart
+				end := matchedEntry.BlockEnd
+				// Trim a single trailing blank line left behind if the
+				// block was preceded by "\n\n" and followed by content.
+				if start >= 2 && current[start-1] == '\n' && current[start-2] == '\n' && end < len(current) {
+					start--
+				}
+				newContent = make([]byte, 0, len(current)-(end-start))
+				newContent = append(newContent, current[:start]...)
+				newContent = append(newContent, current[end:]...)
+			} else {
+				markerIDNew = pathMarkerID(direction, newDirs)
+				block := renderPathBlock(family, markerIDNew, time.Now().UTC(), direction, newDirs)
+				newContent = make([]byte, 0, len(current)-(matchedEntry.BlockEnd-matchedEntry.BlockStart)+len(block))
+				newContent = append(newContent, current[:matchedEntry.BlockStart]...)
+				newContent = append(newContent, block...)
+				newContent = append(newContent, current[matchedEntry.BlockEnd:]...)
+			}
+
+			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
+				return fmt.Errorf("write %s: %w", canonical, err)
+			}
+
+			sum := sha256.Sum256(newContent)
+			newHash := hex.EncodeToString(sum[:])
+
+			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.remove", map[string]any{
+				"dir":           dir,
+				"direction":     direction,
+				"marker_id_new": markerIDNew,
+				"marker_id_old": markerIDOld,
+				"snapshot_id":   snap.ID,
+				"entry_deleted": entryDeleted,
+			}); err != nil {
+				return err
+			}
+
+			if entryDeleted {
+				fmt.Fprintf(c.OutOrStdout(),
+					"removed %q from %s entry in %s (entry deleted)\n", dir, direction, file.DisplayPath)
+			} else {
+				fmt.Fprintf(c.OutOrStdout(),
+					"removed %q from %s entry in %s\n", dir, direction, file.DisplayPath)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
 	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
 	return cmd
+}
+
+// pathListRow is the per-row shape emitted by `dfm path list`. The
+// field names below double as the JSON keys (lowercase, snake-style
+// for marker_id) so `--json` and tab output stay in sync.
+type pathListRow struct {
+	Dir       string `json:"dir"`
+	Direction string `json:"direction"`
+	MarkerID  string `json:"marker_id"`
+}
+
+// pathListRows flattens the managed entries into one row per dir,
+// emitting prepend entries before append entries for deterministic
+// output (consumers can rely on this for grep/jq pipelines).
+func pathListRows(entries []PathManagedEntry) []pathListRow {
+	var prepend, appendRows []pathListRow
+	for _, e := range entries {
+		for _, d := range e.Marker.Dirs {
+			row := pathListRow{
+				Dir:       d,
+				Direction: e.Marker.Direction,
+				MarkerID:  e.Marker.ID,
+			}
+			if e.Marker.Direction == pathDirectionAppend {
+				appendRows = append(appendRows, row)
+			} else {
+				prepend = append(prepend, row)
+			}
+		}
+	}
+	return append(prepend, appendRows...)
 }
 
 func newPathListCmd() *cobra.Command {
@@ -603,10 +791,68 @@ func newPathListCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List dfm-managed PATH entries (stub)",
+		Short: "List dfm-managed PATH entries",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return exitf(exitResolveErr, pathStubMsg, "list")
+		RunE: func(c *cobra.Command, _ []string) error {
+			if shellFlag != "" && fileFlag != "" {
+				return exitf(exitResolveErr,
+					"path list: --shell and --file are mutually exclusive")
+			}
+
+			target, _, err := resolveAliasTarget(shellFlag, fileFlag)
+			if err != nil {
+				return err
+			}
+
+			s, err := openStore(c.Context())
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+
+			// list is read-only and tolerates an untracked rc file —
+			// nothing is mutated and the on-disk markers are the sole
+			// source of truth.
+			if _, _, rerr := resolveTracked(c.Context(), s, target); rerr != nil {
+				dlog.Discard.Debug("path list: target not tracked", "target", target)
+			}
+
+			data, err := os.ReadFile(target)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// Treat a missing rc as "no managed entries". This is
+					// kinder than erroring — `dfm path list` is the cheapest
+					// possible inspection and should never blow up.
+					data = nil
+				} else {
+					return fmt.Errorf("read %s: %w", target, err)
+				}
+			}
+
+			rows := pathListRows(findPathManagedEntries(data))
+
+			if asJSON {
+				out := rows
+				if out == nil {
+					out = []pathListRow{}
+				}
+				enc := json.NewEncoder(c.OutOrStdout())
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(out); err != nil {
+					return fmt.Errorf("encode json: %w", err)
+				}
+				return nil
+			}
+
+			if len(rows) == 0 {
+				return nil
+			}
+			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "DIR\tDIRECTION\tMARKER_ID")
+			for _, r := range rows {
+				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Dir, r.Direction, r.MarkerID)
+			}
+			return tw.Flush()
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
