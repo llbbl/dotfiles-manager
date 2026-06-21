@@ -506,9 +506,8 @@ func newPathAddCmd() *cobra.Command {
 						fmt.Fprintf(tw, "%s\t%d\t%s\n", fi.Rule, fi.Line, fi.Excerpt)
 					}
 					tw.Flush()
-					fmt.Fprintln(c.ErrOrStderr(),
+					return exitf(exitSecretsErr,
 						"path add aborted: secrets detected (--force to override)")
-					os.Exit(exitSecretsErr)
 				}
 				fmt.Fprintf(c.ErrOrStderr(),
 					"warning: %d secret finding(s) in dir token; proceeding due to --force\n",

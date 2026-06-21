@@ -126,9 +126,18 @@ func newInitCmd() *cobra.Command {
 			}
 
 			if plan.TrackPath != "" {
-				fmt.Fprintf(c.OutOrStdout(),
-					"  (skipping inline track of %s — run `dfm track %s` to add it)\n",
-					plan.TrackPath, plan.TrackPath)
+				// Inline the track call so chapter 5's "yes" actually
+				// tracks the file. Failures are non-fatal: init has
+				// already done the heavy lifting (config, repo, state
+				// DB) and the user can recover by re-running
+				// `dfm track <path>` manually. Leave a breadcrumb on
+				// stderr and continue.
+				code, terr := runTrackOne(c, plan.TrackPath, trackOneOptions{})
+				if terr != nil || code != 0 {
+					fmt.Fprintf(c.ErrOrStderr(),
+						"  (inline track of %s failed — run `dfm track %s` to retry)\n",
+						plan.TrackPath, plan.TrackPath)
+				}
 			}
 
 			return nil

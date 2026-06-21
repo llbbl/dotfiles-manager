@@ -55,3 +55,70 @@ func TestInit_HappyPathFreshConfig(t *testing.T) {
 		t.Errorf("ai.claude-code.model = %q, want sonnet", got.AI.ClaudeCode.Model)
 	}
 }
+
+// TestInit_ChapterFive_TracksInline pins the chapter-5 yes-track
+// integration: when the wizard returns a Plan with TrackPath != "",
+// the cobra layer must actually track the file (via runTrackOne) so
+// the user doesn't have to re-run `dfm track` after init. This is the
+// PR-#43 follow-up — the prior implementation only printed a hint.
+//
+// We exercise the cobra-layer hookup directly: call runTrackOne with
+// the same ctx and arguments init.go uses (rawPath = plan.TrackPath,
+// zero-value trackOneOptions), then verify a tracked_files row
+// landed in the state DB.
+func TestInit_ChapterFive_TracksInline(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// chapterTrack hard-codes "~/.zshrc" — mirror that exact rawPath
+	// here so the test fails if the chapter's contract drifts.
+	rcPath := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rcPath, []byte("# test rc\n"), 0o644); err != nil {
+		t.Fatalf("write ~/.zshrc: %v", err)
+	}
+
+	ctx, _, _ := setupEditCmdEnv(t)
+
+	cmd := newInitCmd()
+	cmd.SetContext(ctx)
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	code, err := runTrackOne(cmd, "~/.zshrc", trackOneOptions{})
+	if err != nil {
+		t.Fatalf("runTrackOne: %v\nstderr: %s", err, errOut.String())
+	}
+	if code != 0 {
+		t.Fatalf("runTrackOne code = %d, want 0\nstderr: %s", code, errOut.String())
+	}
+
+	// Resolve to canonical so the WHERE clause matches the row inserted
+	// by tracker.Track (which keys on canonical paths).
+	canonical, err := filepath.EvalSymlinks(rcPath)
+	if err != nil {
+		t.Fatalf("evalsymlinks: %v", err)
+	}
+
+	s, err := openStore(ctx)
+	if err != nil {
+		t.Fatalf("openStore: %v", err)
+	}
+	defer s.Close()
+
+	var (
+		displayPath string
+	)
+	row := s.DB().QueryRowContext(ctx,
+		`SELECT display_path FROM tracked_files WHERE path = ?`, canonical)
+	if err := row.Scan(&displayPath); err != nil {
+		t.Fatalf("expected tracked_files row for %s: %v", canonical, err)
+	}
+	if displayPath == "" {
+		t.Errorf("display_path is empty for tracked row")
+	}
+
+	if !bytes.Contains(out.Bytes(), []byte("tracked")) {
+		t.Errorf("expected 'tracked' confirmation on stdout, got: %s", out.String())
+	}
+}
