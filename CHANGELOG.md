@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.9.0] - 2026-06-21
+
+### Features
+
+- path: Implement 'dfm path import' apply flow with confirmation
 ## [1.8.0] - 2026-06-21
 
 ### Features
