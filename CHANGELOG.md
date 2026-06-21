@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.9.1] - 2026-06-21
+
+### Miscellaneous
+
+- path,init: Close docs/acceptance gaps and inline wizard track (#51)
 ## [1.9.0] - 2026-06-21
 
 ### Features
