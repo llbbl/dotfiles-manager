@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.8.0] - 2026-06-21
+
+### Features
+
+- path: Add 'dfm path import --dry-run' parser and classifier
 ## [1.7.0] - 2026-06-18
 
 ### Features
