@@ -440,24 +440,48 @@ func TestPathImport_OnlyManagedNoProposal(t *testing.T) {
 	}
 }
 
-// --- 14. Apply attempt without --dry-run → exitResolveErr -----------
-
-func TestPathImport_RequiresDryRun(t *testing.T) {
+// --- 14. Non-interactive stdin without --yes / --dry-run rejects ----
+// PR2 stop-leaving-this-dry-run-only flipped the legacy "apply flow not
+// yet implemented" sentinel into a TTY guard: a non-TTY *os.File on
+// stdin with neither --yes nor --dry-run must refuse with the
+// non-interactive hint. We simulate the production CI/pipe shape with
+// os.Pipe — the read end is an *os.File whose mode lacks
+// ModeCharDevice, exactly what isInteractiveStdin keys off.
+func TestPathImport_NonInteractiveRejects(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
-	canonical, _ := writeTracked(t, ctx, "")
-	_, _, err := runImport(t, ctx, "--file", canonical)
+	canonical, _ := writeTracked(t, ctx, `# bashrc
+export PATH="/opt/x:$PATH"
+`)
+	r, w, perr := os.Pipe()
+	if perr != nil {
+		t.Fatalf("pipe: %v", perr)
+	}
+	// Close the write end immediately so the read end is at EOF if the
+	// command ever tried to read it — but it shouldn't, the guard
+	// fires first.
+	_ = w.Close()
+	t.Cleanup(func() { _ = r.Close() })
+
+	cmd := newPathCmd()
+	cmd.SetContext(ctx)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetIn(r)
+	cmd.SetArgs([]string{"import", "--file", canonical})
+	err := cmd.Execute()
 	if err == nil {
-		t.Fatalf("expected error for missing --dry-run")
+		t.Fatalf("expected non-interactive rejection, got nil")
 	}
 	var ee *exitError
 	if !errors.As(err, &ee) || ee.code != exitResolveErr {
 		t.Fatalf("want exitError(code=%d), got %v", exitResolveErr, err)
 	}
-	if !strings.Contains(ee.msg, "apply flow not yet implemented") {
-		t.Errorf("error message lacks 'apply flow not yet implemented': %q", ee.msg)
+	if !strings.Contains(ee.msg, "non-interactive") {
+		t.Errorf("error message lacks 'non-interactive' hint: %q", ee.msg)
 	}
-	if !strings.Contains(ee.msg, "--dry-run") {
-		t.Errorf("error message lacks '--dry-run' hint: %q", ee.msg)
+	if !strings.Contains(ee.msg, "--yes") || !strings.Contains(ee.msg, "--dry-run") {
+		t.Errorf("error message should mention both --yes and --dry-run: %q", ee.msg)
 	}
 }
 
