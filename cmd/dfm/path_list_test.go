@@ -236,6 +236,106 @@ func TestPathList_MarkerIDMatches(t *testing.T) {
 	}
 }
 
+// pnpm coexistence (list half): §7 case #18 (b). path list must
+// enumerate only dfm-managed entries — pnpm's hand-written case-block
+// is invisible to the lister.
+//
+// TestPathAdd_CoexistsWithPnpm covers half (a): the case-block survives
+// a path add byte-identically. This is half (b): when listing, the
+// pnpm block does not appear in either tab-mode or --json output.
+func TestPathList_ExcludesPnpmBlock(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	pnpmBlock := `# pnpm
+export PNPM_HOME="$HOME/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+# pnpm end
+`
+	canonical, _ := writeTracked(t, ctx, pnpmBlock)
+
+	for _, args := range [][]string{
+		{"add", "--file", canonical, "/a"},
+		{"add", "--file", canonical, "/b"},
+	} {
+		cmd := newPathCmd()
+		cmd.SetContext(ctx)
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("seed %v: %v", args, err)
+		}
+	}
+
+	prependID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
+
+	// Tab mode: header + exactly two rows, neither mentioning PNPM_HOME.
+	cmd := newPathCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"list", "--file", canonical})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "PNPM_HOME") {
+		t.Errorf("tab output references pnpm block:\n%s", got)
+	}
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines (incl. header), want 3:\n%s", len(lines), got)
+	}
+	wantOrder := []struct {
+		dir, direction, markerID string
+	}{
+		{"/a", "prepend", prependID},
+		{"/b", "prepend", prependID},
+	}
+	for i, w := range wantOrder {
+		ln := lines[i+1]
+		if !strings.Contains(ln, w.dir) || !strings.Contains(ln, w.direction) || !strings.Contains(ln, w.markerID) {
+			t.Errorf("row %d = %q, want fields [%s %s %s]", i, ln, w.dir, w.direction, w.markerID)
+		}
+	}
+
+	// JSON mode: flat array of exactly two objects, no pnpm anywhere.
+	cmd2 := newPathCmd()
+	cmd2.SetContext(ctx)
+	var out2 bytes.Buffer
+	cmd2.SetOut(&out2)
+	cmd2.SetErr(&bytes.Buffer{})
+	cmd2.SetArgs([]string{"list", "--file", canonical, "--json"})
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("list --json: %v", err)
+	}
+	jsonOut := out2.String()
+	if strings.Contains(jsonOut, "PNPM_HOME") || strings.Contains(jsonOut, "pnpm") {
+		t.Errorf("json output references pnpm block:\n%s", jsonOut)
+	}
+	var rows []map[string]string
+	if err := json.Unmarshal(out2.Bytes(), &rows); err != nil {
+		t.Fatalf("invalid json: %v\nout: %s", err, jsonOut)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2:\n%s", len(rows), jsonOut)
+	}
+	wantRows := []map[string]string{
+		{"dir": "/a", "direction": "prepend", "marker_id": prependID},
+		{"dir": "/b", "direction": "prepend", "marker_id": prependID},
+	}
+	for i, w := range wantRows {
+		for k, v := range w {
+			if rows[i][k] != v {
+				t.Errorf("row %d field %s = %q, want %q", i, k, rows[i][k], v)
+			}
+		}
+	}
+}
+
 // --shell + --file together → exitResolveErr.
 func TestPathList_ShellAndFileMutuallyExclusive(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
@@ -258,4 +358,3 @@ func TestPathList_ShellAndFileMutuallyExclusive(t *testing.T) {
 		t.Errorf("error lacks 'mutually exclusive': %q", ee.msg)
 	}
 }
-

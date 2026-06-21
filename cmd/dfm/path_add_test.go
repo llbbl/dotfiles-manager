@@ -314,8 +314,80 @@ func TestPathAdd_CrossSpellingDedup(t *testing.T) {
 	}
 }
 
+// --force bypasses secrets but NOT dedup: §7 case #7 (secret half).
+// Companion to TestPathAdd_ForceDoesNotBypassDedup; together the two
+// pin both halves of the --force contract: secrets yes, dedup no.
+//
+// The path-add scanner runs over the dir token itself (see path_add.go
+// near `secrets.ScanReader(bytes.NewReader([]byte(dir)))`), so the
+// fixture is a dir whose name embeds a value the AWS-access-key rule
+// recognizes. Without --force the command exits exitSecretsErr and
+// leaves the rc file byte-identical; with --force it proceeds and the
+// managed block is written.
+func TestPathAdd_ForceBypassesSecretScan(t *testing.T) {
+	ctx, _, _ := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "")
+
+	// AWS access key id pattern \bAKIA[0-9A-Z]{16}\b — embedded inside
+	// a dir token so the secret rule fires when the scanner walks
+	// `dir`. The token itself is the canonical AWS docs example value,
+	// so even if the dir doesn't exist on disk the regex is the only
+	// thing that matters here.
+	secretDir := "/opt/AKIAIOSFODNN7EXAMPLE/bin"
+
+	before, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	// Without --force: must exit exitSecretsErr, file untouched.
+	cmd1 := newPathCmd()
+	cmd1.SetContext(ctx)
+	cmd1.SetOut(&bytes.Buffer{})
+	var stderr1 bytes.Buffer
+	cmd1.SetErr(&stderr1)
+	cmd1.SetArgs([]string{"add", "--file", canonical, secretDir})
+	err = cmd1.Execute()
+	if err == nil {
+		t.Fatalf("expected secrets error, got nil")
+	}
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != exitSecretsErr {
+		t.Fatalf("want exitError(code=%d), got %v", exitSecretsErr, err)
+	}
+	after, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("file mutated on secrets refusal:\nbefore: %s\nafter:  %s", before, after)
+	}
+
+	// With --force: succeeds. Managed block is written, dir token
+	// round-trips into the marker `dirs=` field.
+	cmd2 := newPathCmd()
+	cmd2.SetContext(ctx)
+	cmd2.SetOut(&bytes.Buffer{})
+	cmd2.SetErr(&bytes.Buffer{})
+	cmd2.SetArgs([]string{"add", "--file", canonical, "--force", secretDir})
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("force add: %v", err)
+	}
+	got, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read forced: %v", err)
+	}
+	entries := findPathManagedEntries(got)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1:\n%s", len(entries), got)
+	}
+	if !equalStrings(entries[0].Marker.Dirs, []string{secretDir}) {
+		t.Errorf("dirs = %v, want [%s]", entries[0].Marker.Dirs, secretDir)
+	}
+}
+
 // --force does NOT bypass dedup: §7 case #7 (dedup half — the secret
-// scanner half is covered separately when a fixture trigger exists).
+// scanner half is covered by TestPathAdd_ForceBypassesSecretScan).
 func TestPathAdd_ForceDoesNotBypassDedup(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	canonical, _ := writeTracked(t, ctx, "")
