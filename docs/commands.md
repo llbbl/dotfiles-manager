@@ -106,6 +106,119 @@ Strip every definition of `<name>` from the tracked rc file in one pass: legacy 
 
 Best-effort listing of aliases parsed from the tracked rc file. Reads the bare `alias` line inside each shared block (default and named groups) as well as un-fenced legacy entries.
 
+## PATH entries
+
+The `dfm path` family manages directories on your `PATH` from inside a tracked rc file. Multiple directories per direction collapse into a single managed block, the block is idempotent on re-source (sourcing the rc file N times leaves each managed dir on `PATH` exactly once), and unmanaged installer blocks (pnpm, nvm, mise, rustup) are left byte-identical so dfm and tool installers don't fight.
+
+The on-disk shape for bash/zsh looks like this:
+
+```
+# dfm:path:<id8> >>> direction=prepend dirs=/a:/b:/c
+for __dfm_d in /a /b /c; do
+  case ":$PATH:" in
+    *":$__dfm_d:"*) ;;
+    *) PATH="$__dfm_d:$PATH" ;;
+  esac
+done
+unset __dfm_d
+export PATH
+# dfm:path:<id8> <<<
+```
+
+`<id8>` is the first eight hex characters of `sha256("<direction>:<dirs>")` and rotates whenever the dir list changes — the marker is data, not an identifier you depend on. There's at most one managed block per direction per rc file (`prepend` and `append` are independent entries); a second managed block in the same direction is treated as corruption and refused (see "Corruption guard" below).
+
+Fish uses the same idea adapted to fish's `if not contains` form; on a fish rc file the block is emitted with fish syntax automatically.
+
+### `dfm path add <dir>`
+
+Add `<dir>` to the dfm-managed PATH entry. The first call creates the block; subsequent calls splice the new dir into the existing block and rotate the marker id.
+
+```sh
+dfm path add ~/.local/bin
+dfm path add ~/.cargo/bin
+dfm path add /opt/homebrew/sbin --append
+```
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — pick which rc file to target (defaults to `$SHELL`).
+- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--append` — write into the append-direction entry (default: prepend).
+- `--force` — bypass the secrets pre-flight scan. Does NOT bypass dedup — adding a dir that's already on the managed entry still exits 4.
+
+Exit 4 if the dir is already on the managed entry in the same direction (cross-spelling equivalence: `~/x` and `$HOME/x` are the same dir). Exit 3 on secrets findings (suppressible with `--force`).
+
+### `dfm path remove <dir>`
+
+Remove `<dir>` from the dfm-managed PATH entry. If the entry has multiple dirs the block shrinks; if `<dir>` was the only dir the entire block is dropped (no empty stub left behind).
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — pick which rc file to target.
+- `--file <path>` — explicit rc file (overrides `--shell`).
+
+Exit 4 if `<dir>` is not on any dfm-managed entry in the target file.
+
+### `dfm path list`
+
+List the dirs on each dfm-managed PATH entry in the target rc file. Default output is tab-separated rows of `DIR / DIRECTION / MARKER_ID`; `--json` emits a flat array of `{dir, direction, marker_id}` objects.
+
+`list` only enumerates dfm-managed entries — installer blocks (pnpm, nvm, mise, etc.) are intentionally invisible to this command. Use your shell directly (`echo $PATH | tr ':' '\n'`) to see your full effective `PATH`.
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — pick which rc file to target.
+- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--json` — JSON output.
+
+### `dfm path import`
+
+Scan a tracked rc file for static `PATH` lines and fold them into one dfm-managed prepend entry.
+
+```sh
+dfm path import                    # interactive: print proposal, prompt y/N
+dfm path import --dry-run          # print proposal, exit without writing
+dfm path import --yes              # apply without prompting (for scripts)
+```
+
+The scanner classifies every PATH-touching line into one of five buckets:
+
+- **Importable bare prepend** — `export PATH="X:$PATH"` with a literal dir token.
+- **Importable guarded prepend** — pnpm-style `case ":$PATH:" in *":$X:"*) ;; *) export PATH="$X:$PATH" ;; esac`.
+- **Dynamic skip** — `eval "$(mise activate zsh)"`, `source ~/.nvm/nvm.sh`, plugin-loader sourcing. These run code at startup; dfm can't safely import them.
+- **Already-managed skip** — a dfm-managed block (the entire `>>> … <<<` range counts as one entry; it's not re-imported).
+- **Unknown** — anything PATH-shaped the classifier doesn't recognise. Surfaced in the proposal so you can act on it manually; never imported.
+
+Apply takes a pre-edit snapshot first, then splices the bare/guarded importable lines out and inserts a single coalesced managed prepend block in their place. The snapshot is the rollback path — see `dfm restore <snapshot-id>` to undo.
+
+Flags:
+
+- `--shell <bash|zsh|profile>` — pick which rc file to target. Fish is not supported by `import` (fish's PATH conventions are different enough that there's nothing to fold).
+- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--dry-run` — print the proposal and exit without writing.
+- `-y`, `--yes` — apply without prompting. Required when stdin is non-interactive (a piped or redirected shell errors out without `--yes` or `--dry-run`).
+- `--json` — emit a JSON report instead of human-readable text. JSON mode keeps stdout clean even when the interactive prompt fires (prompt text goes to stderr).
+
+`--dry-run` wins if both `--dry-run` and `--yes` are set. The command refuses if the target rc file already has a dfm-managed prepend entry — clean up with `dfm path remove` first, or add dirs to the existing entry with `dfm path add`.
+
+### Coexistence with installer blocks
+
+dfm's managed PATH block matches the shape pnpm, nvm, mise, and rustup all use — a substring guard so re-sourcing the rc file doesn't re-prepend. Installer blocks are detected and skipped during `dfm path` operations: they aren't enumerated by `dfm path list`, aren't disturbed by `dfm path add`/`remove`/`import`, and stay byte-identical across dfm mutations. You can let installers continue to manage their own dirs; dfm only owns the dirs you explicitly `path add` or import.
+
+### Re-source idempotency
+
+The managed block is built so sourcing your rc file repeatedly never grows `PATH`. Each managed dir is wrapped in its own `case` guard inside a `for` loop, so a dir that's already on `PATH` short-circuits. You can verify this on your own shell:
+
+```sh
+echo $PATH | tr ':' '\n' | sort | uniq -c | sort -rn | head
+```
+
+Any line with a count > 1 is a duplicate. After moving dirs into a dfm-managed entry and re-sourcing, the managed dirs each appear exactly once regardless of how many times the rc file has been sourced.
+
+### Zsh `typeset -U path` pairing
+
+On zsh you can additionally add `typeset -U path PATH` near the top of `~/.zshrc` — this tells zsh to dedupe `path` automatically on every assignment. It pairs naturally with `dfm path`: dfm makes the managed block itself idempotent, and `typeset -U` cleans up any non-dfm-managed lines (legacy installer blocks, hand-edited exports) that don't have their own guard. The two mechanisms are independent and stack cleanly.
+
 ## Backup repo + sync
 
 ### `dfm init`
