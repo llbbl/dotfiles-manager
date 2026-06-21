@@ -1,13 +1,21 @@
 package main
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/snapshot"
+	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -44,6 +52,12 @@ const (
 // managed) in the import report.
 type pathImportEntry struct {
 	Line int             `json:"line"`
+	// EndLine is the 1-based last line index of this entry. For single-
+	// line entries (bare IMPORTABLE, dynamic, unknown) it equals Line;
+	// for guarded blocks it points at the `esac` line so apply can splice
+	// the entire block by line range. We keep it off the JSON schema —
+	// consumers can derive multi-line bounds by parsing `raw`.
+	EndLine int `json:"-"`
 	Raw  string          `json:"raw"`
 	Dir  string          `json:"dir,omitempty"`
 	// Direction is "prepend" for v1 IMPORTABLE entries; empty otherwise.
@@ -430,6 +444,7 @@ func scanPathImport(file string, content []byte) pathImportReport {
 		if block, consumed := tryParseGuardedBlock(lines, i); block != nil {
 			entry := pathImportEntry{
 				Line:      block.StartLine,
+				EndLine:   block.EndLine,
 				Raw:       block.Raw,
 				Dir:       block.Dir,
 				Direction: pathDirectionPrepend,
@@ -450,6 +465,7 @@ func scanPathImport(file string, content []byte) pathImportReport {
 		if dir, ok := classifyImportableBare(raw); ok {
 			entry := pathImportEntry{
 				Line:      i + 1,
+				EndLine:   i + 1,
 				Raw:       raw,
 				Dir:       dir,
 				Direction: pathDirectionPrepend,
@@ -534,7 +550,8 @@ func uniqueImportableDirs(entries []pathImportEntry) []string {
 // renderPathImportHuman writes the human-readable report to `w`. The
 // shape matches spec §Output — empty sections are omitted, and if
 // IMPORTABLE is empty we emit the "no importable PATH lines found"
-// sentinel and skip the proposal entirely.
+// sentinel and skip the proposal entirely. The caller is responsible
+// for printing any follow-on prompt/apply summary AFTER the report.
 func renderPathImportHuman(w *strings.Builder, report pathImportReport) {
 	fmt.Fprintf(w, "scanning %s...\n\n", report.File)
 
@@ -593,7 +610,6 @@ func renderPathImportHuman(w *strings.Builder, report pathImportReport) {
 			report.Proposal.Direction,
 			strings.Join(report.Proposal.Dirs, ", "),
 		)
-		w.WriteString("(apply flow not yet implemented — see follow-up)\n")
 	} else {
 		// Sections emitted but nothing IMPORTABLE → no proposal line.
 		if len(report.Importable) == 0 {
@@ -604,51 +620,51 @@ func renderPathImportHuman(w *strings.Builder, report pathImportReport) {
 
 // newPathImportCmd builds the `dfm path import` subcommand.
 //
-// Read-only contract (PR1):
-//   - --dry-run is REQUIRED. Running without it exits exitResolveErr
-//     with the "apply flow not yet implemented" message.
-//   - No snapshot, no audit, no tracker.RecordHashChange.
-//   - The rc file is opened os.ReadFile only.
-//   - --shell=fish exits exitResolveErr: the fish parser ships in a
-//     follow-up.
+// Behavior matrix:
+//   - default (no --dry-run, no --yes): print proposal, prompt
+//     `Apply? [y/N]:`, apply on y/yes (case-insensitive).
+//   - --dry-run: print proposal, exit. No prompt, no write.
+//   - --yes/-y: print proposal, skip prompt, apply unconditionally.
+//   - --dry-run --yes: --dry-run wins.
+//   - --json: emits the structured proposal; for apply mode an extra
+//     trailing JSON object on a new line reports the outcome.
+//
+// Non-interactive stdin + no --yes + no --dry-run refuses with
+// exitResolveErr — the user has to opt in explicitly when there's no
+// TTY to read y/N from. --shell=fish remains rejected until the fish
+// parser ships.
 func newPathImportCmd() *cobra.Command {
 	var (
 		shellFlag string
 		fileFlag  string
 		dryRun    bool
+		yes       bool
 		asJSON    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "import",
-		Short: "Scan a tracked rc file for static PATH lines and propose consolidation (read-only)",
+		Short: "Scan a tracked rc file for static PATH lines and fold them into one dfm-managed prepend entry",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if shellFlag != "" && fileFlag != "" {
 				return exitf(exitResolveErr,
 					"path import: --shell and --file are mutually exclusive")
 			}
-			if !dryRun {
-				return exitf(exitResolveErr,
-					"apply flow not yet implemented — re-run with --dry-run to see the proposal")
-			}
 			if shellFlag == "fish" {
 				return exitf(exitResolveErr,
 					"path import: fish import not yet supported")
 			}
 
-			target, _, err := resolveAliasTarget(shellFlag, fileFlag)
+			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}
 
-			// import is read-only and tolerates an untracked rc file —
-			// the tracker check would be load-bearing only if we were
-			// about to mutate. Read the bytes and classify.
+			// Read the rc bytes. Missing file is treated as "empty" so
+			// the user sees the sentinel rather than a stat error.
 			data, rerr := os.ReadFile(target)
 			if rerr != nil {
 				if os.IsNotExist(rerr) {
-					// Treat a missing rc file as "empty" so the user
-					// sees the sentinel rather than a stat error.
 					data = nil
 				} else {
 					return fmt.Errorf("read %s: %w", target, rerr)
@@ -657,24 +673,353 @@ func newPathImportCmd() *cobra.Command {
 
 			report := scanPathImport(target, data)
 
+			// Render the proposal (same as PR #49 for both modes).
 			if asJSON {
 				enc := json.NewEncoder(c.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(jsonReportShape(report))
+				if err := enc.Encode(jsonReportShape(report)); err != nil {
+					return err
+				}
+			} else {
+				var b strings.Builder
+				renderPathImportHuman(&b, report)
+				if _, err := c.OutOrStdout().Write([]byte(b.String())); err != nil {
+					return err
+				}
 			}
 
-			var b strings.Builder
-			renderPathImportHuman(&b, report)
-			_, err = c.OutOrStdout().Write([]byte(b.String()))
-			return err
+			// Dry-run wins over --yes per the surface matrix.
+			if dryRun {
+				return nil
+			}
+
+			// Nothing to import — short-circuit before snapshot/prompt.
+			if report.Proposal == nil || len(report.Proposal.Dirs) == 0 {
+				if asJSON {
+					if err := writePathImportTrailer(c.OutOrStdout(), pathImportApplyResult{
+						Applied: false,
+						Reason:  "nothing-to-import",
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+
+			// Determine whether to apply.
+			apply := yes
+			if !apply {
+				if !isInteractiveStdin(c.InOrStdin()) {
+					return exitf(exitResolveErr,
+						"path import: non-interactive shell — pass --yes to apply or --dry-run to preview")
+				}
+				// Prompt goes to STDERR so --json's stdout stays a
+				// clean JSON stream (proposal doc + one-line trailer).
+				answer, perr := promptApply(c.ErrOrStderr(), c.InOrStdin())
+				if perr != nil {
+					return fmt.Errorf("read confirmation: %w", perr)
+				}
+				apply = answer
+			}
+
+			if !apply {
+				if asJSON {
+					if err := writePathImportTrailer(c.OutOrStdout(), pathImportApplyResult{
+						Applied: false,
+						Reason:  "user-declined",
+					}); err != nil {
+						return err
+					}
+				} else {
+					fmt.Fprintln(c.OutOrStdout(), "declined — no changes written.")
+				}
+				return nil
+			}
+
+			// Apply path.
+			return runPathImportApply(c, target, family, data, report)
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|profile)")
 	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the proposal without writing (required in this version)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the proposal without writing")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "apply without prompting (non-interactive)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit a JSON report instead of human-readable text")
 	return cmd
 }
+
+// pathImportApplyResult is the trailing JSON object emitted in --json
+// mode after the structured proposal. It mirrors the human-readable
+// summary the apply path prints: outcome + identifying ids.
+type pathImportApplyResult struct {
+	Applied    bool   `json:"applied"`
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	MarkerID   string `json:"marker_id,omitempty"`
+	DirsCount  int    `json:"dirs_count,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// writePathImportTrailer encodes the apply-result JSON object as a
+// single line so the dry-run proposal stays a standalone document on
+// stdout and the trailer is unambiguously separable by line-based
+// consumers.
+func writePathImportTrailer(w io.Writer, res pathImportApplyResult) error {
+	buf, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(buf); err != nil {
+		return err
+	}
+	_, err = w.Write([]byte("\n"))
+	return err
+}
+
+// isInteractiveStdin reports whether r is something we can safely
+// read a y/N answer from.
+//
+// Production:
+//   - r is os.Stdin (or another *os.File). We treat it as interactive
+//     iff its mode carries ModeCharDevice — i.e. a real TTY. Pipes,
+//     redirected files, and closed fds all fail this check and bounce
+//     out with the non-interactive error.
+//
+// Tests:
+//   - cmd.SetIn(strings.NewReader(...)) injects a non-*os.File reader.
+//     We treat that as interactive — the test author deliberately wired
+//     up an input source and wants us to read it. Tests that DO want
+//     to exercise the non-TTY refusal pass an os.Pipe() read-end via
+//     SetIn; that's a *os.File without ModeCharDevice and falls into
+//     the same branch as a production pipe.
+func isInteractiveStdin(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return true
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+// promptApply emits the Apply? [y/N]: prompt and reads a single line
+// from r. Returns true on y/yes/Y/YES, false on anything else (including
+// empty Enter). The prompt goes to w (typically stdout) so it lands in
+// the same stream as the proposal — tests assert against stdout.
+func promptApply(w io.Writer, r io.Reader) (bool, error) {
+	if _, err := fmt.Fprint(w, "Apply? [y/N]: "); err != nil {
+		return false, err
+	}
+	br := bufio.NewReader(r)
+	line, err := br.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	line = strings.TrimSpace(line)
+	switch strings.ToLower(line) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// runPathImportApply performs the mutation: refuses if a corruption-
+// shape prepend entry already exists, deletes the IMPORTABLE lines/
+// blocks, splices in a new managed prepend block at the position of
+// the first deleted importable line, snapshots + atomic-writes +
+// records the hash change in the standard alias.add shape.
+//
+// `current` is the pre-edit file bytes (the caller already read them);
+// passing them in avoids a second os.ReadFile and keeps the
+// "what we hashed pre-write" semantics aligned with the snapshot
+// that's about to be taken.
+func runPathImportApply(c *cobra.Command, target, family string, current []byte, report pathImportReport) error {
+	// Corruption-shape refusal: if rc already has a direction=prepend
+	// dfm-managed entry, refuse — path add is the correct way to add
+	// dirs to an existing managed entry.
+	for _, e := range findPathManagedEntries(current) {
+		if e.Marker.Direction == pathDirectionPrepend {
+			return exitf(exitResolveErr,
+				"path import: rc file already has a dfm-managed prepend entry — use 'dfm path add' to add dirs instead, or 'dfm path remove' first")
+		}
+	}
+
+	// We can only mutate a tracked file — the audit + snapshot machinery
+	// is keyed on tracker.File. Resolve once the user has confirmed.
+	s, err := openStore(c.Context())
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	file, canonical, err := resolveTracked(c.Context(), s, target)
+	if err != nil {
+		fmt.Fprintf(c.ErrOrStderr(),
+			"not tracked: %s. Run: dfm track %s\n", target, target)
+		os.Exit(exitAlreadyOrMiss)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", canonical, err)
+	}
+
+	dirs := report.Proposal.Dirs
+	newID := pathMarkerID(pathDirectionPrepend, dirs)
+	newBlock := renderPathBlock(family, newID, time.Now().UTC(), pathDirectionPrepend, dirs)
+
+	newContent := spliceImportableLines(current, report.Importable, newBlock)
+
+	mgr, mgrErr := newSnapshotManager(c.Context(), s)
+	if mgrErr != nil {
+		return fmt.Errorf("snapshot manager: %w", mgrErr)
+	}
+	snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
+	if err != nil {
+		return err
+	}
+
+	if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("write %s: %w", canonical, err)
+	}
+
+	sum := sha256.Sum256(newContent)
+	newHash := hex.EncodeToString(sum[:])
+
+	// Audit field shape mirrors path.add: marker_id_new / marker_id_old /
+	// snapshot_id are the same triple. lines_removed counts importable
+	// entries folded into the new block. sub_action distinguishes
+	// import from add/remove.
+	if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.import", map[string]any{
+		"marker_id_new": newID,
+		"marker_id_old": "",
+		"snapshot_id":   snap.ID,
+		"lines_removed": len(report.Importable),
+		"dirs_count":    len(dirs),
+		"direction":     pathDirectionPrepend,
+		"sub_action":    "import",
+	}); err != nil {
+		return err
+	}
+
+	asJSON, _ := c.Flags().GetBool("json")
+	if asJSON {
+		return writePathImportTrailer(c.OutOrStdout(), pathImportApplyResult{
+			Applied:    true,
+			SnapshotID: snap.ID,
+			MarkerID:   newID,
+			DirsCount:  len(dirs),
+		})
+	}
+
+	fmt.Fprintf(c.OutOrStdout(),
+		"applied: %d dirs folded into one prepend entry (marker %s)\n",
+		len(dirs), newID)
+	fmt.Fprintf(c.OutOrStdout(),
+		"snapshot: %s  ->  dfm restore --snapshot %s  to revert\n",
+		snap.ID, snap.ID)
+	return nil
+}
+
+// spliceImportableLines deletes every IMPORTABLE line/block from
+// `current` (by 1-based line range stored on each entry) and inserts
+// `newBlock` at the position of the FIRST deleted IMPORTABLE line.
+// Consecutive blank lines that remain after deletion are trimmed to
+// at most one. The original file's final-newline state is preserved
+// byte-for-byte: if the input ended with "\n", so does the output;
+// otherwise the output's last byte stays non-"\n".
+func spliceImportableLines(current []byte, importable []pathImportEntry, newBlock string) []byte {
+	if len(importable) == 0 {
+		return current
+	}
+	hadTrailingNewline := len(current) > 0 && current[len(current)-1] == '\n'
+
+	// Split into lines. We strip a single trailing "\n" if present so
+	// the slice length equals the number of "real" lines and we can
+	// rebuild with a join.
+	src := current
+	if hadTrailingNewline {
+		src = src[:len(src)-1]
+	}
+	lines := strings.Split(string(src), "\n")
+
+	// Mark which lines (0-based) to delete and find the first
+	// IMPORTABLE line's index for the insertion point.
+	toDelete := make([]bool, len(lines))
+	firstIdx := -1
+	for _, e := range importable {
+		start := e.Line - 1
+		end := e.EndLine - 1
+		if end < start {
+			end = start
+		}
+		for i := start; i <= end && i < len(lines); i++ {
+			toDelete[i] = true
+		}
+		if firstIdx == -1 || start < firstIdx {
+			firstIdx = start
+		}
+	}
+	if firstIdx < 0 {
+		// Defensive: nothing matched, return unchanged.
+		return current
+	}
+
+	// Build the new line list. The new block is inserted as a single
+	// pseudo-line at firstIdx (it already carries its own trailing
+	// newline from renderPathBlock, so we re-split it into lines for
+	// uniform handling and then trim the final empty slice element
+	// produced by the trailing "\n").
+	blockLines := strings.Split(strings.TrimSuffix(newBlock, "\n"), "\n")
+
+	out := make([]string, 0, len(lines)+len(blockLines))
+	inserted := false
+	for i, ln := range lines {
+		if i == firstIdx {
+			out = append(out, blockLines...)
+			inserted = true
+		}
+		if !toDelete[i] {
+			out = append(out, ln)
+		}
+	}
+	if !inserted {
+		// firstIdx was past EOF — just append.
+		out = append(out, blockLines...)
+	}
+
+	// Collapse runs of >1 blank line to exactly one.
+	out = collapseBlankRuns(out)
+
+	joined := strings.Join(out, "\n")
+	if hadTrailingNewline {
+		joined += "\n"
+	}
+	return []byte(joined)
+}
+
+// collapseBlankRuns reduces any run of >1 empty string in lines to a
+// single empty string. Lines containing only whitespace are NOT treated
+// as blank — they're rare in rc files and conservatively preserving
+// them avoids surprising the user.
+func collapseBlankRuns(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	prevBlank := false
+	for _, ln := range lines {
+		if ln == "" {
+			if prevBlank {
+				continue
+			}
+			prevBlank = true
+		} else {
+			prevBlank = false
+		}
+		out = append(out, ln)
+	}
+	return out
+}
+
 
 // jsonReportShape strips internal-only fields (dupOf) from the report
 // before JSON encoding so the schema stays flat.
