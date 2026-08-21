@@ -4,7 +4,7 @@
 
 Required tool versions are pinned in [`mise.toml`](../mise.toml):
 
-- Go 1.25.7
+- Go 1.25.14
 - just 1.46.0
 
 Install [mise](https://mise.jdx.dev/) and run:
