@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.9.5] - 2026-08-21
+
+### Miscellaneous
+
+- Bump Go to 1.25.14 and add govulncheck to CI (#58)
 ## [1.9.4] - 2026-08-21
 
 ### Miscellaneous
