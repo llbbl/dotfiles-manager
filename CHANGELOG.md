@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.9.4] - 2026-08-21
+
+### Miscellaneous
+
+- deps: Bump the go-deps group with 2 updates (#55)
 ## [1.9.3] - 2026-08-03
 
 ### Miscellaneous
