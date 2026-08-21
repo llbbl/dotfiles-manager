@@ -4,7 +4,6 @@
 CLAUDE.md
 .agents.md
 AGENTS.md
-.beads/
 _/
 
 # Go build artifacts
@@ -32,12 +31,10 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Beads / Dolt / SQLite / libSQL state files
-.dolt/
+# SQLite / libSQL state files
 *.db
 *.db-wal
 *.db-shm
 *.db-journal
 *.sqlite
 *.sqlite3
-.beads-credential-key
