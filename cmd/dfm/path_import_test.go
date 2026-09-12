@@ -187,7 +187,7 @@ func TestPathImport_ManagedBlockSkippedAsOne(t *testing.T) {
 	dirs := []string{"/a", "/b", "/c"}
 	managedBlock := wellFormedPathBlock(
 		pathDirectionPrepend, dirs,
-		"for __dfm_d in /a /b /c; do\n  case \":$PATH:\" in\n    *\":$__dfm_d:\"*) ;;\n    *) PATH=\"$__dfm_d:$PATH\" ;;\n  esac\ndone\nunset __dfm_d\nexport PATH\n",
+		"for __dfm_d in /a /b /c; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	canonical, _ := writeTracked(t, ctx, "# bashrc\n"+managedBlock)
 

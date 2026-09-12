@@ -112,20 +112,28 @@ The `dfm path` family manages directories on your `PATH` from inside a tracked r
 
 The markers, the id, and the block bounds are identical everywhere; only the body between them varies by shell, picked automatically from `--shell`, from the rc filename behind `--file`, or from `$SHELL`.
 
-bash, sh, and `.profile` get a POSIX body — `--shell profile` targets `/bin/sh`, which is bash 3.2 on macOS:
+bash, sh, and `.profile` get a POSIX body — `--shell profile` targets `/bin/sh`, which is bash 3.2 on macOS. It rebuilds `PATH` without the managed dir and then re-inserts it at the requested end, so a dir already present at lower precedence is promoted and duplicates collapse:
 
 ```
 # dfm:path:<id8> >>> direction=prepend dirs=/a:/b:/c
 for __dfm_d in /a /b /c; do
-  case ":$PATH:" in
-    *":$__dfm_d:"*) ;;
-    *) PATH="$__dfm_d:$PATH" ;;
-  esac
+  __dfm_rest=$PATH; __dfm_new=
+  while [ -n "$__dfm_rest" ]; do
+    __dfm_p=${__dfm_rest%%:*}
+    case $__dfm_rest in
+      *:*) __dfm_rest=${__dfm_rest#*:} ;;
+      *) __dfm_rest= ;;
+    esac
+    [ "$__dfm_p" = "$__dfm_d" ] || __dfm_new=${__dfm_new:+$__dfm_new:}$__dfm_p
+  done
+  PATH="$__dfm_d${__dfm_new:+:$__dfm_new}"
 done
-unset __dfm_d
+unset __dfm_d __dfm_p __dfm_new __dfm_rest
 export PATH
 # dfm:path:<id8> <<<
 ```
+
+`PATH` is split by hand rather than by setting `IFS`: zsh does not word-split an unquoted parameter, and restoring a previously-unset `IFS` leaves it empty rather than unset, which would kill word splitting for the rest of the sourcing shell.
 
 zsh gets its native `path` array, which removes and re-inserts in one step — so a dir already on `PATH` is promoted to the front (or moved to the back with `--append`) and any duplicates collapse:
 
@@ -152,13 +160,13 @@ set -e __dfm_d
 
 A few consequences of using each shell's own machinery are worth knowing:
 
-- **fish does not collapse a duplicate that is already on `PATH`.** `fish_add_path --move` promotes the entry it manages, but a second copy of the same directory placed elsewhere by something else stays. The zsh body removes it. Measured against fish 3.7.
+- **fish does not collapse a duplicate that is already on `PATH`.** `fish_add_path --move` promotes the entry it manages, but a second copy of the same directory placed elsewhere by something else stays. The zsh and POSIX bodies remove it. Measured against fish 3.7.
 - **fish ignores a directory that does not exist on disk.** That is `fish_add_path`'s documented behaviour, not dfm's choice. The bash and zsh bodies add the dir regardless, so an rc file synced to a machine before the directory is created behaves differently under fish. fish also normalises the token (`.`, `..`, trailing slashes, relative paths), so what lands on `$PATH` can differ textually from the `dirs=` list in the marker.
-- **The zsh body drops empty `PATH` components.** An empty component means the current directory; `/usr/bin::/bin` becomes `/usr/bin:/bin` after the block runs. The bash body preserves it.
+- **Empty `PATH` components are handled differently per shell.** An empty component means the current directory. The zsh body drops every one of them: `/usr/bin::/bin` becomes `/usr/bin:/bin`. The bash body drops a leading or trailing one but keeps an interior one, so that same input survives as `/usr/bin::/bin`. Neither body ever introduces one.
 
 `<id8>` is the first eight hex characters of `sha256("<direction>:<dirs>")` and rotates whenever the dir list changes — the marker is data, not an identifier you depend on. There's at most one managed block per direction per rc file (`prepend` and `append` are independent entries); a second managed block in the same direction is treated as corruption and refused (see "Corruption guard" below).
 
-Blocks are found by their markers alone, never by their body, so a block written for one shell is replaced in place rather than duplicated when the body shape changes.
+Blocks are found by their markers alone, never by their body, so a block written for one shell is replaced in place rather than duplicated when the body shape changes. An existing block is only rewritten when its dir list changes, though, so a block written by an older dfm keeps its old body until something edits it — `dfm path remove <dir>` followed by `dfm path add <dir>` regenerates it with the current one.
 
 ### `dfm path add <dir>`
 

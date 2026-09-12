@@ -68,12 +68,12 @@ func TestPathAdd_FirstAddCreatesEntry(t *testing.T) {
 	if !bytes.Contains(got, []byte(closeTok)) {
 		t.Errorf("missing close marker %q in:\n%s", closeTok, got)
 	}
-	// Body shape sanity: for-loop iterates `/a`, case-guard, prepend assignment.
+	// Body shape sanity: for-loop iterates `/a`, rebuild loop, prepend assignment.
 	expectFragments := []string{
 		"for __dfm_d in /a; do",
-		`*":$__dfm_d:"*) ;;`,
-		`*) PATH="$__dfm_d:$PATH" ;;`,
-		"unset __dfm_d",
+		`[ "$__dfm_p" = "$__dfm_d" ] || __dfm_new=${__dfm_new:+$__dfm_new:}$__dfm_p`,
+		`PATH="$__dfm_d${__dfm_new:+:$__dfm_new}"`,
+		"unset __dfm_d __dfm_p __dfm_new __dfm_rest",
 		"export PATH",
 	}
 	for _, frag := range expectFragments {
@@ -236,7 +236,7 @@ func TestPathAdd_AppendCreatesSeparateEntry(t *testing.T) {
 		t.Errorf("expected distinct marker ids, both = %q", entries[0].Marker.ID)
 	}
 	// The append entry's body must use the append-direction assignment.
-	if !bytes.Contains(got, []byte(`*) PATH="$PATH:$__dfm_d" ;;`)) {
+	if !bytes.Contains(got, []byte(`PATH="${__dfm_new:+$__dfm_new:}$__dfm_d"`)) {
 		t.Errorf("missing append-direction assignment in:\n%s", got)
 	}
 }

@@ -36,8 +36,8 @@ func TestPathAdd_Zsh_RendersZshBody(t *testing.T) {
 			t.Errorf("expected fragment %q in:\n%s", frag, got)
 		}
 	}
-	// The POSIX guard and the explicit export belong to bash only.
-	for _, frag := range []string{`case ":$PATH:" in`, "export PATH\n"} {
+	// The POSIX rebuild loop and the explicit export belong to bash only.
+	for _, frag := range []string{"__dfm_new", "export PATH\n"} {
 		if bytes.Contains(got, []byte(frag)) {
 			t.Errorf("unexpected posix fragment %q in zsh output:\n%s", frag, got)
 		}
@@ -192,7 +192,7 @@ func TestPathRemove_Zsh_KeepsZshBody(t *testing.T) {
 	if !bytes.Contains(got, []byte("for __dfm_d in /b; do\n")) {
 		t.Errorf("expected shrunk zsh loop over /b in:\n%s", got)
 	}
-	if strings.Contains(string(got), `case ":$PATH:" in`) {
+	if strings.Contains(string(got), "__dfm_new") {
 		t.Errorf("posix body written on remove:\n%s", got)
 	}
 }

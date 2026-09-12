@@ -172,15 +172,6 @@ var fishPromoteTable = []pathOrderCase{
 	{"append adds missing", []string{"a", "c"}, pathDirectionAppend, "b", []string{"a", "c", "b"}},
 }
 
-// skipIfPresentTable is the current POSIX behaviour: an entry already
-// on PATH is left alone. Promotion there is a separate change.
-var skipIfPresentTable = []pathOrderCase{
-	{"leaves existing", []string{"a", "b", "c"}, pathDirectionPrepend, "b", []string{"a", "b", "c"}},
-	{"adds missing", []string{"a", "c"}, pathDirectionPrepend, "b", []string{"b", "a", "c"}},
-	{"append adds missing", []string{"a", "c"}, pathDirectionAppend, "b", []string{"a", "c", "b"}},
-	{"append leaves existing", []string{"a", "b", "c"}, pathDirectionAppend, "b", []string{"a", "b", "c"}},
-}
-
 func TestPathBlock_Zsh_PathOrder(t *testing.T) {
 	zsh := lookInterpreter(t, "zsh")
 	runPathOrderTable(t, pathInterpreter{
@@ -203,11 +194,13 @@ func TestPathBlock_Fish_PathOrder(t *testing.T) {
 	}, "fish", fishPromoteTable)
 }
 
-// The POSIX body is executed under every POSIX shell available: the bash
+// posixInterpreters is the set the POSIX body has to survive: the bash
 // 3.2 behind /bin/sh and --shell profile on macOS, a modern bash, and
 // dash, which is /bin/sh on Debian and Ubuntu.
+var posixInterpreters = []string{"bash", "/bin/sh", "/bin/bash", "dash"}
+
 func TestPathBlock_Posix_PathOrder(t *testing.T) {
-	for _, sh := range []string{"bash", "/bin/sh", "/bin/bash", "dash"} {
+	for _, sh := range posixInterpreters {
 		t.Run(strings.TrimPrefix(sh, "/bin/"), func(t *testing.T) {
 			p := lookInterpreter(t, sh)
 			runPathOrderTable(t, pathInterpreter{
@@ -216,7 +209,89 @@ func TestPathBlock_Posix_PathOrder(t *testing.T) {
 				echoCmd:   `echo "$PATH"`,
 				sourceCmd: ".",
 				split:     splitColon,
-			}, "posix", skipIfPresentTable)
+			}, "posix", promoteTable)
+		})
+	}
+}
+
+// runPosixProbe sources the POSIX block with IFS unset beforehand and
+// returns the probe's output.
+func runPosixProbe(t *testing.T, interp, probe string) string {
+	t.Helper()
+	dirs := pathDirs(t, "a")
+	block := renderPathBlock("posix", "deadbeef", goldenTime, pathDirectionPrepend, []string{dirs["a"]})
+	file := filepath.Join(t.TempDir(), "block")
+	if err := os.WriteFile(file, []byte(block), 0o644); err != nil {
+		t.Fatalf("write block: %v", err)
+	}
+	cmd := exec.Command(interp, "-c", "unset IFS; . "+file+"; "+probe)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil || stderr.Len() > 0 {
+		t.Fatalf("run: %v\nstderr:\n%s\nblock:\n%s", err, stderr.String(), block)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// An empty PATH component means the current directory, so the block
+// must never create one. The hazard is a PATH holding nothing but the
+// managed dir: the separator has to come from the same expansion as the
+// rest of PATH, not be written unconditionally.
+func TestPathBlock_Posix_NoEmptyComponent(t *testing.T) {
+	for _, sh := range posixInterpreters {
+		t.Run(strings.TrimPrefix(sh, "/bin/"), func(t *testing.T) {
+			p := lookInterpreter(t, sh)
+			for _, direction := range []string{pathDirectionPrepend, pathDirectionAppend} {
+				t.Run(direction, func(t *testing.T) {
+					dirs := pathDirs(t, "a")
+					block := renderPathBlock("posix", "deadbeef", goldenTime, direction, []string{dirs["a"]})
+					file := filepath.Join(t.TempDir(), "block")
+					if err := os.WriteFile(file, []byte(block), 0o644); err != nil {
+						t.Fatalf("write block: %v", err)
+					}
+					cmd := exec.Command(p, "-c", ". "+file+`; printf '%s' "$PATH"`)
+					cmd.Env = []string{"PATH=" + dirs["a"], "HOME=" + t.TempDir()}
+					out, err := cmd.Output()
+					if err != nil {
+						t.Fatalf("run: %v\nblock:\n%s", err, block)
+					}
+					if got := string(out); got != dirs["a"] {
+						t.Errorf("PATH = %q, want %q", got, dirs["a"])
+					}
+				})
+			}
+		})
+	}
+}
+
+// The body must not touch IFS. Saving and restoring it looks harmless
+// but turns a previously-unset IFS into an empty one, which disables
+// word splitting for the rest of the sourcing shell.
+func TestPathBlock_Posix_LeavesWordSplittingIntact(t *testing.T) {
+	for _, sh := range posixInterpreters {
+		t.Run(strings.TrimPrefix(sh, "/bin/"), func(t *testing.T) {
+			p := lookInterpreter(t, sh)
+			got := runPosixProbe(t, p, `set -- $(printf "x y"); echo "$#"`)
+			if got != "2" {
+				t.Errorf("word splitting after sourcing gave $# = %s, want 2", got)
+			}
+		})
+	}
+}
+
+// The POSIX block must not leave any of its scratch variables behind in
+// the shell it was sourced into.
+func TestPathBlock_Posix_UnsetsLoopVariables(t *testing.T) {
+	for _, sh := range posixInterpreters {
+		t.Run(strings.TrimPrefix(sh, "/bin/"), func(t *testing.T) {
+			p := lookInterpreter(t, sh)
+			got := runPosixProbe(t, p,
+				`echo "[${__dfm_d-unset}][${__dfm_p-unset}][${__dfm_new-unset}][${__dfm_rest-unset}]"`)
+			if got != "[unset][unset][unset][unset]" {
+				t.Errorf("scratch variables after sourcing = %s, want all unset", got)
+			}
 		})
 	}
 }

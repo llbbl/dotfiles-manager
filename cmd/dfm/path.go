@@ -313,19 +313,22 @@ func newPathCmd() *cobra.Command {
 	return cmd
 }
 
-// buildBashExportLine returns the per-iteration PATH assignment that
-// goes inside the case fallthrough — prepending or appending the loop
-// variable depending on direction. The double-quoted form survives word
-// splitting on directories that contain spaces.
-func buildBashExportLine(direction string) string {
+// buildPosixPathLine returns the PATH assignment that re-inserts the
+// loop variable once the rebuild loop has stripped every copy of it.
+//
+// The `${__dfm_new:+...}` guard carries the separator, so a PATH that
+// held nothing but the managed dir does not gain a leading or trailing
+// empty component — an empty component means the current directory.
+func buildPosixPathLine(direction string) string {
 	if direction == pathDirectionAppend {
-		return `PATH="$PATH:$__dfm_d"`
+		return `PATH="${__dfm_new:+$__dfm_new:}$__dfm_d"`
 	}
-	return `PATH="$__dfm_d:$PATH"`
+	return `PATH="$__dfm_d${__dfm_new:+:$__dfm_new}"`
 }
 
 // renderPathBlockBash emits the full managed entry — both markers and
-// the for/case/done body — with a trailing newline after the close
+// the remove-then-insert body, which is what promotes a dir already on
+// PATH at lower precedence — with a trailing newline after the close
 // marker so callers can splice the result directly into a file. The
 // body stays POSIX because --shell profile targets /bin/sh, which is
 // bash 3.2 on macOS.
@@ -339,12 +342,18 @@ func renderPathBlockBash(id string, updatedAt time.Time, direction string, dirs 
 	b.WriteString(formatPathOpenMarker(id, updatedAt, direction, dirs))
 	b.WriteByte('\n')
 	fmt.Fprintf(&b, "for __dfm_d in %s; do\n", strings.Join(dirs, " "))
-	b.WriteString("  case \":$PATH:\" in\n")
-	b.WriteString("    *\":$__dfm_d:\"*) ;;\n")
-	fmt.Fprintf(&b, "    *) %s ;;\n", buildBashExportLine(direction))
-	b.WriteString("  esac\n")
+	b.WriteString("  __dfm_rest=$PATH; __dfm_new=\n")
+	b.WriteString("  while [ -n \"$__dfm_rest\" ]; do\n")
+	b.WriteString("    __dfm_p=${__dfm_rest%%:*}\n")
+	b.WriteString("    case $__dfm_rest in\n")
+	b.WriteString("      *:*) __dfm_rest=${__dfm_rest#*:} ;;\n")
+	b.WriteString("      *) __dfm_rest= ;;\n")
+	b.WriteString("    esac\n")
+	b.WriteString("    [ \"$__dfm_p\" = \"$__dfm_d\" ] || __dfm_new=${__dfm_new:+$__dfm_new:}$__dfm_p\n")
+	b.WriteString("  done\n")
+	fmt.Fprintf(&b, "  %s\n", buildPosixPathLine(direction))
 	b.WriteString("done\n")
-	b.WriteString("unset __dfm_d\n")
+	b.WriteString("unset __dfm_d __dfm_p __dfm_new __dfm_rest\n")
 	b.WriteString("export PATH\n")
 	b.WriteString(formatPathCloseMarker(id))
 	b.WriteByte('\n')
