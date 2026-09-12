@@ -233,7 +233,15 @@ Flags:
 
 - `--remote <url>` — override `[repo].remote`.
 - `--create-remote` — accept the gh-create flow non-interactively.
-- `--yes` — skip the interactive confirm.
+- `--yes` — non-interactive: accept all defaults.
+- `--print` — render the would-be config to stdout and write nothing.
+- `--force` — overwrite an existing config without edit-mode pre-fills.
+- `--state <local|turso>` — pick the state-store branch of the wizard.
+- `--turso` — provision a Turso libSQL remote DB.
+- `--turso-db-name <name>` — DB to create or reuse (default `dotfiles-state`).
+- `--turso-url <url>` — bake in an existing `libsql://` URL and skip provisioning.
+- `--turso-auth-token <token>` — bake in an existing auth token.
+- `--ai-model <name>` / `--ai-bin <path>` — override the AI chapter.
 
 ### `dfm sync`
 
