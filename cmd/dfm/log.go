@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/vcs"
 	"github.com/spf13/cobra"
 )
@@ -48,6 +50,21 @@ func newLogCmd() *cobra.Command {
 				return err
 			}
 			defer s.Close()
+
+			// Audit payloads carry the full suggestion id, so a prefix from
+			// `dfm suggestions` resolves first. An unmatched prefix falls through
+			// and yields no rows, which is what it did before.
+			if suggestionID != "" {
+				full, rerr := s.ResolveID(ctx, "suggestions", suggestionID)
+				switch {
+				case rerr == nil:
+					suggestionID = full
+				case printSuggestionCandidates(c, rerr):
+					return exitf(exitAmbiguousID, "ambiguous suggestion id prefix: %s", suggestionID)
+				case !errors.Is(rerr, store.ErrIDNotFound):
+					return rerr
+				}
+			}
 
 			var sinceTS string
 			if sinceFlag != "" {

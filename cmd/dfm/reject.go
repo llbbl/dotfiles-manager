@@ -32,11 +32,15 @@ func newRejectCmd() *cobra.Command {
 			repo := apply.NewRepo(s)
 			sg, err := repo.Get(ctx, id)
 			if err != nil {
+				if printSuggestionCandidates(c, err) {
+					return exitf(exitAmbiguousID, "ambiguous suggestion id prefix: %s", id)
+				}
 				if errors.Is(err, apply.ErrNotFound) {
-					return exitf(exitResolveErr, "suggestion not found: %s", id)
+					return exitf(exitResolveErr, "no suggestion matches id prefix: %s", id)
 				}
 				return err
 			}
+			id = sg.ID
 
 			fields := map[string]any{
 				"suggestion_id": id,

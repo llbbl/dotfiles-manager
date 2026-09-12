@@ -254,7 +254,7 @@ Flags:
 
 - `--since <date>` — filter to records on/after a date.
 - `--limit N` — cap the result count.
-- `--suggestion <id>` — show the full lifecycle of a single AI suggestion (suggest → apply or reject), in ascending timestamp order.
+- `--suggestion <id>` — show the full lifecycle of a single AI suggestion (suggest → apply or reject), in ascending timestamp order. Any unambiguous id prefix works; an ambiguous prefix lists the candidates and exits 7, and a prefix matching no suggestion simply yields no rows.
 - `--with-commits` — interleave git commits from the backup repo.
 - `--json` — JSON output.
 
@@ -291,11 +291,13 @@ Preview, snapshot, and apply a pending suggestion in-process. The unified diff i
 
 Flags: `--yes` (skip confirmation), `--json`.
 
+Any unambiguous id prefix works, including the shortened ids `dfm suggestions` prints. An ambiguous prefix lists the matching ids and exits 7.
+
 If anything fails after the snapshot is taken, the source file is left untouched, the suggestion stays `pending`, and the error message includes the snapshot id with a `dfm restore` hint.
 
 ### `dfm reject <suggestion-id>`
 
-Mark a pending suggestion as rejected without applying it.
+Mark a pending suggestion as rejected without applying it. Accepts any unambiguous id prefix.
 
 ## Snapshots
 
@@ -318,6 +320,8 @@ Flags: `--json`.
 Restore a snapshot's contents to disk. Atomic temp + rename; refuses to overwrite an existing destination unless told to.
 
 Flags: `--to <path>` (default: snapshot's original path), `--overwrite`, `--json`.
+
+Any unambiguous id prefix works, including the shortened ids `dfm backups` prints. An ambiguous prefix lists the matching snapshots and exits 7.
 
 ### `dfm prune`
 

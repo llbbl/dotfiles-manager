@@ -14,6 +14,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/apply"
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/diffrender"
+	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -43,11 +44,15 @@ func newApplyCmd() *cobra.Command {
 			repo := apply.NewRepo(s)
 			sg, err := repo.Get(ctx, id)
 			if err != nil {
+				if printSuggestionCandidates(c, err) {
+					return exitf(exitAmbiguousID, "ambiguous suggestion id prefix: %s", id)
+				}
 				if errors.Is(err, apply.ErrNotFound) {
-					return exitf(exitNotFound, "suggestion not found: %s", id)
+					return exitf(exitNotFound, "no suggestion matches id prefix: %s", id)
 				}
 				return err
 			}
+			id = sg.ID
 			if sg.Status != apply.StatusPending {
 				return exitf(exitAlreadyOrMiss,
 					"suggestion %s already decided (status=%s)", id, sg.Status)
@@ -136,6 +141,22 @@ func newApplyCmd() *cobra.Command {
 	return cmd
 }
 
+// printSuggestionCandidates writes the ids an ambiguous prefix matched to
+// stderr, one per line, and reports whether err was that case.
+func printSuggestionCandidates(c *cobra.Command, err error) bool {
+	var amb *store.AmbiguousIDError
+	if !errors.As(err, &amb) {
+		return false
+	}
+	w := c.ErrOrStderr()
+	fmt.Fprintf(w, "ambiguous suggestion id prefix %q matches %d suggestions:\n",
+		amb.Prefix, len(amb.Candidates))
+	for _, id := range amb.Candidates {
+		fmt.Fprintf(w, "  %s\n", id)
+	}
+	return true
+}
+
 // logApplyFailure emits the apply_failed audit row, branching on
 // PostSnapshotError to attach snapshot_id and unwrap the inner error
 // for classification. base must contain the canonical apply fields
@@ -204,4 +225,3 @@ func classifyApplyError(err error) string {
 	}
 	return "other"
 }
-

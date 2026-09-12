@@ -10,6 +10,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
+	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
@@ -163,26 +164,34 @@ func newRestoreCmd() *cobra.Command {
 				return err
 			}
 
-			dest, n, err := mgr.Restore(c.Context(), args[0], to, snapshot.RestoreOptions{Overwrite: overwrite})
+			snap, err := mgr.Get(c.Context(), args[0])
 			if err != nil {
-				if errors.Is(err, snapshot.ErrDestExists) {
-					fmt.Fprintf(c.ErrOrStderr(), "destination exists (use --overwrite): %s\n", to)
-					os.Exit(exitAlreadyOrMiss)
+				var amb *store.AmbiguousIDError
+				if errors.As(err, &amb) {
+					printSnapshotCandidates(c, mgr, amb)
+					return exitf(exitAmbiguousID, "ambiguous snapshot id prefix: %s", args[0])
 				}
 				if errors.Is(err, snapshot.ErrSnapshotNotFound) {
-					fmt.Fprintf(c.ErrOrStderr(), "snapshot not found: %s\n", args[0])
-					os.Exit(exitAlreadyOrMiss)
+					return exitf(exitAlreadyOrMiss, "no snapshot matches id prefix: %s", args[0])
+				}
+				return err
+			}
+
+			dest, n, err := mgr.Restore(c.Context(), snap.ID, to, snapshot.RestoreOptions{Overwrite: overwrite})
+			if err != nil {
+				if errors.Is(err, snapshot.ErrDestExists) {
+					return exitf(exitAlreadyOrMiss, "destination exists (use --overwrite): %s", to)
 				}
 				return err
 			}
 			if asJSON {
 				return writeJSON(c.OutOrStdout(), map[string]any{
-					"id":   args[0],
+					"id":   snap.ID,
 					"dest": dest,
 					"size": n,
 				})
 			}
-			fmt.Fprintf(c.OutOrStdout(), "restored %s -> %s (%d bytes)\n", args[0], dest, n)
+			fmt.Fprintf(c.OutOrStdout(), "restored %s -> %s (%d bytes)\n", snap.ID, dest, n)
 			return nil
 		},
 	}
@@ -190,6 +199,24 @@ func newRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "overwrite existing destination")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit as JSON")
 	return cmd
+}
+
+// printSnapshotCandidates lists the snapshots an ambiguous prefix matched,
+// one per line with created-at and path so the user can pick. Candidate
+// counts are tiny, so a Get per candidate is cheap.
+func printSnapshotCandidates(c *cobra.Command, mgr *snapshot.Manager, amb *store.AmbiguousIDError) {
+	err := c.ErrOrStderr()
+	fmt.Fprintf(err, "ambiguous snapshot id prefix %q matches %d snapshots:\n",
+		amb.Prefix, len(amb.Candidates))
+	for _, id := range amb.Candidates {
+		snap, gerr := mgr.Get(c.Context(), id)
+		if gerr != nil {
+			fmt.Fprintf(err, "  %s\n", id)
+			continue
+		}
+		fmt.Fprintf(err, "  %s  %s  %s\n",
+			id, snap.CreatedAt.Format("2006-01-02 15:04:05"), snap.Path)
+	}
 }
 
 // newPruneCmd builds the `dfm prune` command, which evicts old

@@ -85,12 +85,29 @@ type Repo struct {
 // NewRepo binds the repo to an open Store.
 func NewRepo(s *store.Store) *Repo { return &Repo{s: s} }
 
-// Get returns the suggestion with the given id.
+// Get returns the suggestion with the given id, which may be any
+// unambiguous prefix of one. An ambiguous prefix returns
+// *store.AmbiguousIDError. Callers with more work to do should reuse the
+// returned Suggestion.ID so the rest of the flow skips resolution.
 func (r *Repo) Get(ctx context.Context, id string) (Suggestion, error) {
+	full, err := r.resolve(ctx, id)
+	if err != nil {
+		return Suggestion{}, err
+	}
 	row := r.s.DB().QueryRowContext(ctx, `
 		SELECT id, COALESCE(file_id, 0), provider, prompt, diff, status, created_at, decided_at
-		FROM suggestions WHERE id = ?`, id)
+		FROM suggestions WHERE id = ?`, full)
 	return scanSuggestion(row)
+}
+
+// resolve maps an id prefix to the full suggestion id. An already-full id
+// costs one indexed lookup, so every entry point can call it.
+func (r *Repo) resolve(ctx context.Context, id string) (string, error) {
+	full, err := r.s.ResolveID(ctx, "suggestions", id)
+	if errors.Is(err, store.ErrIDNotFound) {
+		return "", ErrNotFound
+	}
+	return full, err
 }
 
 // List returns suggestions ordered by created_at DESC. Pass fileID=0 to
@@ -140,15 +157,20 @@ func (r *Repo) SetStatus(ctx context.Context, id, status string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := r.s.DB().ExecContext(ctx,
 		`UPDATE suggestions SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'`,
-		status, now, id); err != nil {
+		status, now, sg.ID); err != nil {
 		return fmt.Errorf("update suggestion status: %w", err)
 	}
 	return nil
 }
 
 // ResolveFile returns the tracker.File referenced by the suggestion.
+// sugID may be an unambiguous prefix.
 func (r *Repo) ResolveFile(ctx context.Context, sugID string) (tracker.File, error) {
-	row := r.s.DB().QueryRowContext(ctx, `SELECT file_id FROM suggestions WHERE id = ?`, sugID)
+	full, err := r.resolve(ctx, sugID)
+	if err != nil {
+		return tracker.File{}, err
+	}
+	row := r.s.DB().QueryRowContext(ctx, `SELECT file_id FROM suggestions WHERE id = ?`, full)
 	var fileID sql.NullInt64
 	if err := row.Scan(&fileID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
@@ -199,6 +221,8 @@ func (r *Repo) Apply(ctx context.Context, mgr *snapshot.Manager, id string) (App
 	if sg.Status != StatusPending {
 		return ApplyResult{}, ErrAlreadyDecided
 	}
+	// Get already resolved any prefix; the rest of the flow uses the full id.
+	id = sg.ID
 	file, err := r.ResolveFile(ctx, id)
 	if err != nil {
 		return ApplyResult{}, err
