@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.10.0] - 2026-09-12
+
+### Features
+
+- Emit shell-native PATH blocks for zsh and fish (#74)
 ## [1.9.9] - 2026-09-12
 
 ### Documentation
