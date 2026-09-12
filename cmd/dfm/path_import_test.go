@@ -528,7 +528,7 @@ export PATH="/opt/x:$PATH"
 }
 
 // --- bonus: --file on a path that does not exist --------------------
-// resolveAliasTarget happily returns an absolute path even for a
+// resolvePathTarget happily returns an absolute path even for a
 // non-existent file; we treat ENOENT as "empty rc" so the sentinel is
 // what the user sees rather than a stat error.
 func TestPathImport_MissingFileTreatedAsEmpty(t *testing.T) {

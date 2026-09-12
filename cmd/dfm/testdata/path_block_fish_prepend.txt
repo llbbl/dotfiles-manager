@@ -1,0 +1,6 @@
+# dfm:path:df918c1a >>>  updated=2026-01-02T03:04:05Z  direction=prepend  dirs=/a:/b:/c
+for __dfm_d in /a /b /c
+    fish_add_path --path --move $__dfm_d
+end
+set -e __dfm_d
+# dfm:path:df918c1a <<<

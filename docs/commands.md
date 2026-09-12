@@ -110,7 +110,9 @@ Best-effort listing of aliases parsed from the tracked rc file. Reads the bare `
 
 The `dfm path` family manages directories on your `PATH` from inside a tracked rc file. Multiple directories per direction collapse into a single managed block, the block is idempotent on re-source (sourcing the rc file N times leaves each managed dir on `PATH` exactly once), and unmanaged installer blocks (pnpm, nvm, mise, rustup) are left byte-identical so dfm and tool installers don't fight.
 
-The on-disk shape for bash/zsh looks like this:
+The markers, the id, and the block bounds are identical everywhere; only the body between them varies by shell, picked automatically from `--shell`, from the rc filename behind `--file`, or from `$SHELL`.
+
+bash, sh, and `.profile` get a POSIX body — `--shell profile` targets `/bin/sh`, which is bash 3.2 on macOS:
 
 ```
 # dfm:path:<id8> >>> direction=prepend dirs=/a:/b:/c
@@ -125,9 +127,38 @@ export PATH
 # dfm:path:<id8> <<<
 ```
 
+zsh gets its native `path` array, which removes and re-inserts in one step — so a dir already on `PATH` is promoted to the front (or moved to the back with `--append`) and any duplicates collapse:
+
+```
+# dfm:path:<id8> >>> direction=prepend dirs=/a:/b:/c
+# Assumes zsh's default tie between $path and $PATH, so no export is needed.
+for __dfm_d in /a /b /c; do
+  path=($__dfm_d ${path:#$__dfm_d})
+done
+unset __dfm_d
+# dfm:path:<id8> <<<
+```
+
+fish delegates to `fish_add_path`, fish's own implementation of this feature, which is idempotent on its own. `--path` keeps the change on `$PATH` in the sourcing shell rather than the universal `fish_user_paths`, and `--move` promotes a dir that is already present. This requires **fish 3.2 or newer** (2021; Ubuntu 22.04 ships 3.3, 24.04 ships 3.7):
+
+```
+# dfm:path:<id8> >>> direction=prepend dirs=/a:/b:/c
+for __dfm_d in /a /b /c
+    fish_add_path --path --move $__dfm_d
+end
+set -e __dfm_d
+# dfm:path:<id8> <<<
+```
+
+A few consequences of using each shell's own machinery are worth knowing:
+
+- **fish does not collapse a duplicate that is already on `PATH`.** `fish_add_path --move` promotes the entry it manages, but a second copy of the same directory placed elsewhere by something else stays. The zsh body removes it. Measured against fish 3.7.
+- **fish ignores a directory that does not exist on disk.** That is `fish_add_path`'s documented behaviour, not dfm's choice. The bash and zsh bodies add the dir regardless, so an rc file synced to a machine before the directory is created behaves differently under fish. fish also normalises the token (`.`, `..`, trailing slashes, relative paths), so what lands on `$PATH` can differ textually from the `dirs=` list in the marker.
+- **The zsh body drops empty `PATH` components.** An empty component means the current directory; `/usr/bin::/bin` becomes `/usr/bin:/bin` after the block runs. The bash body preserves it.
+
 `<id8>` is the first eight hex characters of `sha256("<direction>:<dirs>")` and rotates whenever the dir list changes — the marker is data, not an identifier you depend on. There's at most one managed block per direction per rc file (`prepend` and `append` are independent entries); a second managed block in the same direction is treated as corruption and refused (see "Corruption guard" below).
 
-Fish uses the same idea adapted to fish's `if not contains` form; on a fish rc file the block is emitted with fish syntax automatically.
+Blocks are found by their markers alone, never by their body, so a block written for one shell is replaced in place rather than duplicated when the body shape changes.
 
 ### `dfm path add <dir>`
 
@@ -207,7 +238,7 @@ dfm's managed PATH block matches the shape pnpm, nvm, mise, and rustup all use �
 
 ### Re-source idempotency
 
-The managed block is built so sourcing your rc file repeatedly never grows `PATH`. Each managed dir is wrapped in its own `case` guard inside a `for` loop, so a dir that's already on `PATH` short-circuits. You can verify this on your own shell:
+The managed block is built so sourcing your rc file repeatedly never grows `PATH`. Each shell gets there its own way — a `case` guard on bash, a remove-then-insert `path` assignment on zsh, `fish_add_path` on fish — but the result is the same. You can verify this on your own shell:
 
 ```sh
 echo $PATH | tr ':' '\n' | sort | uniq -c | sort -rn | head
@@ -217,7 +248,9 @@ Any line with a count > 1 is a duplicate. After moving dirs into a dfm-managed e
 
 ### Zsh `typeset -U path` pairing
 
-On zsh you can additionally add `typeset -U path PATH` near the top of `~/.zshrc` — this tells zsh to dedupe `path` automatically on every assignment. It pairs naturally with `dfm path`: dfm makes the managed block itself idempotent, and `typeset -U` cleans up any non-dfm-managed lines (legacy installer blocks, hand-edited exports) that don't have their own guard. The two mechanisms are independent and stack cleanly.
+dfm's zsh block does not set `typeset -U path` and won't: that flag is persistent, so it would silently change every later `PATH` assignment in your session, not just the managed block. The block dedupes only the dirs it owns.
+
+You can still add `typeset -U path PATH` near the top of `~/.zshrc` yourself if you want it — it tells zsh to dedupe `path` on every assignment, which cleans up non-dfm-managed lines (legacy installer blocks, hand-edited exports) that have no guard of their own. The two mechanisms are independent and stack cleanly.
 
 ## Backup repo + sync
 

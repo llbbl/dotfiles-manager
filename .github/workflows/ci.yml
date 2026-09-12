@@ -31,6 +31,13 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Install shells under test
+        run: |
+          # The PATH-block tests execute the generated body in each target
+          # shell and skip when it is missing; neither ships on the runner.
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+
       - name: Test
         run: |
           # Extract the turso native library once, serially. Upstream writes it

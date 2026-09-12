@@ -1,0 +1,6 @@
+# dfm:path:58005654 >>>  updated=2026-01-02T03:04:05Z  direction=append  dirs=/a:/b:/c
+for __dfm_d in /a /b /c
+    fish_add_path --path --move --append $__dfm_d
+end
+set -e __dfm_d
+# dfm:path:58005654 <<<

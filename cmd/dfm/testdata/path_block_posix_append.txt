@@ -1,0 +1,10 @@
+# dfm:path:58005654 >>>  updated=2026-01-02T03:04:05Z  direction=append  dirs=/a:/b:/c
+for __dfm_d in /a /b /c; do
+  case ":$PATH:" in
+    *":$__dfm_d:"*) ;;
+    *) PATH="$PATH:$__dfm_d" ;;
+  esac
+done
+unset __dfm_d
+export PATH
+# dfm:path:58005654 <<<

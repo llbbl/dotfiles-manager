@@ -1,0 +1,10 @@
+# dfm:path:df918c1a >>>  updated=2026-01-02T03:04:05Z  direction=prepend  dirs=/a:/b:/c
+for __dfm_d in /a /b /c; do
+  case ":$PATH:" in
+    *":$__dfm_d:"*) ;;
+    *) PATH="$__dfm_d:$PATH" ;;
+  esac
+done
+unset __dfm_d
+export PATH
+# dfm:path:df918c1a <<<
