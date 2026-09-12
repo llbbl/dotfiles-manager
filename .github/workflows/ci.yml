@@ -32,7 +32,12 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -count=1 ./...
+        run: |
+          # Extract the turso native library once, serially. Upstream writes it
+          # to a shared cache path in place, so the parallel run below can read
+          # a half-written file and panic on a hash mismatch.
+          go test -count=1 ./internal/store/
+          go test -count=1 ./...
 
   lint:
     name: golangci-lint
