@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.9.7] - 2026-09-12
+
+### Bug Fixes
+
+- Resolve unambiguous ID prefixes in restore, apply, reject, and log (#65)
 ## [1.9.6] - 2026-09-12
 
 ### Bug Fixes
