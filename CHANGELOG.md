@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [unreleased]
+
+### Documentation
+
+- Ship a Claude Code plugin with the /dfm:manage skill (#69)
+## [1.9.8] - 2026-09-12
+
+### Bug Fixes
+
+- Warm the turso library cache before parallel test runs (#72)
 ## [1.9.7] - 2026-09-12
 
 ### Bug Fixes
