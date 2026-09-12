@@ -313,33 +313,35 @@ func newPathCmd() *cobra.Command {
 	return cmd
 }
 
-// buildBashZshExportLine returns the per-iteration PATH assignment that
+// buildBashExportLine returns the per-iteration PATH assignment that
 // goes inside the case fallthrough — prepending or appending the loop
 // variable depending on direction. The double-quoted form survives word
 // splitting on directories that contain spaces.
-func buildBashZshExportLine(direction string) string {
+func buildBashExportLine(direction string) string {
 	if direction == pathDirectionAppend {
 		return `PATH="$PATH:$__dfm_d"`
 	}
 	return `PATH="$__dfm_d:$PATH"`
 }
 
-// renderPathBlockBashZsh emits the full managed entry — both markers
-// and the for/case/done body — with a trailing newline after the close
-// marker so callers can splice the result directly into a file.
+// renderPathBlockBash emits the full managed entry — both markers and
+// the for/case/done body — with a trailing newline after the close
+// marker so callers can splice the result directly into a file. The
+// body stays POSIX because --shell profile targets /bin/sh, which is
+// bash 3.2 on macOS.
 //
 // v1 constraint: dir tokens are well-formed shell words (no spaces, no
 // ':', no shell metacharacters). The for-loop body emits them
 // space-separated, unquoted; the marker comment emits them
 // colon-separated regardless of shell (canonical per spec §5.1).
-func renderPathBlockBashZsh(id string, updatedAt time.Time, direction string, dirs []string) string {
+func renderPathBlockBash(id string, updatedAt time.Time, direction string, dirs []string) string {
 	var b strings.Builder
 	b.WriteString(formatPathOpenMarker(id, updatedAt, direction, dirs))
 	b.WriteByte('\n')
 	fmt.Fprintf(&b, "for __dfm_d in %s; do\n", strings.Join(dirs, " "))
 	b.WriteString("  case \":$PATH:\" in\n")
 	b.WriteString("    *\":$__dfm_d:\"*) ;;\n")
-	fmt.Fprintf(&b, "    *) %s ;;\n", buildBashZshExportLine(direction))
+	fmt.Fprintf(&b, "    *) %s ;;\n", buildBashExportLine(direction))
 	b.WriteString("  esac\n")
 	b.WriteString("done\n")
 	b.WriteString("unset __dfm_d\n")
@@ -349,31 +351,63 @@ func renderPathBlockBashZsh(id string, updatedAt time.Time, direction string, di
 	return b.String()
 }
 
-// buildFishSetLine returns the fish `set -gx PATH ...` assignment that
-// runs inside the `if not contains` guard. For prepend, the new dir
-// comes before the existing PATH; for append, it comes after.
-func buildFishSetLine(direction string) string {
+// buildZshPathLine returns the zsh `path` array assignment for a
+// direction. Dropping the directory before re-inserting it gives
+// promote-if-present, add-if-absent, and duplicate collapsing in one
+// step.
+//
+// The directory has to stay in $__dfm_d: `${path:#$var}` matches
+// literally, while a literal in that position is a glob and would eat
+// unrelated entries. `typeset -U path` is the other way to dedupe and
+// is rejected here — it sets a uniqueness flag that outlives the block
+// and changes every later PATH assignment in the user's session.
+func buildZshPathLine(direction string) string {
 	if direction == pathDirectionAppend {
-		return "set -gx PATH $PATH $__dfm_d"
+		return `path=(${path:#$__dfm_d} $__dfm_d)`
 	}
-	return "set -gx PATH $__dfm_d $PATH"
+	return `path=($__dfm_d ${path:#$__dfm_d})`
 }
 
-// renderPathBlockFish emits the full managed entry in fish syntax —
-// see spec §5.3. As with the bash/zsh renderer, the marker comment's
-// `dirs=` is colon-separated regardless of shell (canonical, comment-
-// only); the for-loop body uses space-separated dirs because fish
-// syntax requires it.
-//
-// 4-space indentation inside `for…end` is the fish convention.
+// renderPathBlockZsh emits the full managed entry using zsh's native
+// `path` array. Same marker and dir-token contract as the bash
+// renderer; only the body differs.
+func renderPathBlockZsh(id string, updatedAt time.Time, direction string, dirs []string) string {
+	var b strings.Builder
+	b.WriteString(formatPathOpenMarker(id, updatedAt, direction, dirs))
+	b.WriteByte('\n')
+	b.WriteString("# Assumes zsh's default tie between $path and $PATH, so no export is needed.\n")
+	fmt.Fprintf(&b, "for __dfm_d in %s; do\n", strings.Join(dirs, " "))
+	fmt.Fprintf(&b, "  %s\n", buildZshPathLine(direction))
+	b.WriteString("done\n")
+	b.WriteString("unset __dfm_d\n")
+	b.WriteString(formatPathCloseMarker(id))
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// buildFishAddPathLine returns the fish_add_path invocation for a
+// direction. --path keeps the effect on $PATH in the sourcing shell
+// rather than fish_user_paths, which is universal and would persist
+// into every other fish session. --move promotes a directory that is
+// already present instead of leaving it where it sits.
+func buildFishAddPathLine(direction string) string {
+	if direction == pathDirectionAppend {
+		return "fish_add_path --path --move --append $__dfm_d"
+	}
+	return "fish_add_path --path --move $__dfm_d"
+}
+
+// renderPathBlockFish emits the full managed entry in fish syntax.
+// fish_add_path is fish's own implementation of this feature and is
+// already idempotent, so there is no hand-rolled guard; it requires
+// fish 3.2 (2021). 4-space indentation inside `for…end` is the fish
+// convention.
 func renderPathBlockFish(id string, updatedAt time.Time, direction string, dirs []string) string {
 	var b strings.Builder
 	b.WriteString(formatPathOpenMarker(id, updatedAt, direction, dirs))
 	b.WriteByte('\n')
 	fmt.Fprintf(&b, "for __dfm_d in %s\n", strings.Join(dirs, " "))
-	b.WriteString("    if not contains -- $__dfm_d $PATH\n")
-	fmt.Fprintf(&b, "        %s\n", buildFishSetLine(direction))
-	b.WriteString("    end\n")
+	fmt.Fprintf(&b, "    %s\n", buildFishAddPathLine(direction))
 	b.WriteString("end\n")
 	b.WriteString("set -e __dfm_d\n")
 	b.WriteString(formatPathCloseMarker(id))
@@ -382,14 +416,42 @@ func renderPathBlockFish(id string, updatedAt time.Time, direction string, dirs 
 }
 
 // renderPathBlock dispatches to the correct shell-specific renderer
-// based on the resolved target family ("fish" or "posix"). This is the
-// single seam the add/remove commands use so the dispatch lives in one
-// place.
+// based on the resolved target family ("fish", "zsh" or "posix"). This
+// is the single seam the add/remove commands use so the dispatch lives
+// in one place.
 func renderPathBlock(family, id string, updatedAt time.Time, direction string, dirs []string) string {
-	if family == "fish" {
+	switch family {
+	case "fish":
 		return renderPathBlockFish(id, updatedAt, direction, dirs)
+	case "zsh":
+		return renderPathBlockZsh(id, updatedAt, direction, dirs)
+	default:
+		return renderPathBlockBash(id, updatedAt, direction, dirs)
 	}
-	return renderPathBlockBashZsh(id, updatedAt, direction, dirs)
+}
+
+// pathShellFamily maps a raw shell name to a PATH rendering family.
+// Unlike shellFamily, zsh does not collapse into posix: its native
+// `path` array promotes and dedupes in a way the POSIX body cannot.
+func pathShellFamily(shell string) string {
+	switch shell {
+	case "fish":
+		return "fish"
+	case "zsh":
+		return "zsh"
+	default:
+		return "posix"
+	}
+}
+
+// resolvePathTarget is resolveAliasTarget's sibling for the path
+// commands: identical file resolution, three-way family instead of two.
+func resolvePathTarget(shellFlag, fileFlag string) (string, string, error) {
+	target, shell, err := resolveShellTarget(shellFlag, fileFlag)
+	if err != nil {
+		return "", "", err
+	}
+	return target, pathShellFamily(shell), nil
 }
 
 func newPathAddCmd() *cobra.Command {
@@ -415,7 +477,7 @@ func newPathAddCmd() *cobra.Command {
 					"path add: --shell and --file are mutually exclusive")
 			}
 
-			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
+			target, family, err := resolvePathTarget(shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}
@@ -533,9 +595,8 @@ func newPathAddCmd() *cobra.Command {
 			if existing != nil {
 				// In-place splice: replace the old block bytes with the
 				// new block. BlockEnd already includes the trailing
-				// newline if there was one — renderPathBlockBashZsh
-				// always emits a trailing newline, so byte semantics
-				// line up.
+				// newline if there was one — every renderer always
+				// emits a trailing newline, so byte semantics line up.
 				newContent = make([]byte, 0, len(current)-(existing.BlockEnd-existing.BlockStart)+len(block))
 				newContent = append(newContent, current[:existing.BlockStart]...)
 				newContent = append(newContent, block...)
@@ -617,7 +678,7 @@ func newPathRemoveCmd() *cobra.Command {
 					"path remove: --shell and --file are mutually exclusive")
 			}
 
-			target, family, err := resolveAliasTarget(shellFlag, fileFlag)
+			target, family, err := resolvePathTarget(shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}
@@ -798,7 +859,7 @@ func newPathListCmd() *cobra.Command {
 					"path list: --shell and --file are mutually exclusive")
 			}
 
-			target, _, err := resolveAliasTarget(shellFlag, fileFlag)
+			target, _, err := resolvePathTarget(shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}

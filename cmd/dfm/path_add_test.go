@@ -16,7 +16,7 @@ import (
 
 // writeTrackedNamed is a sibling of writeTracked that lets the test
 // specify the basename of the fixture file. Needed for the fish-file
-// guard test, which relies on resolveAliasTarget inferring the family
+// guard test, which relies on resolvePathTarget inferring the family
 // from the .fish suffix.
 func writeTrackedNamed(t *testing.T, ctx context.Context, basename, contents string) (canonical, display string) {
 	t.Helper()

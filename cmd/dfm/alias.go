@@ -74,6 +74,8 @@ func rcFileForShell(shell string) (string, error) {
 
 // shellFamily collapses a raw shell name to one of "fish" or "posix"
 // (bash, zsh, sh, profile). Used for picking quoting + regex syntax.
+// Alias syntax is identical in bash and zsh, so zsh collapses here; PATH
+// rendering needs a finer split and uses pathShellFamily instead.
 func shellFamily(shell string) string {
 	if shell == "fish" {
 		return "fish"
@@ -81,11 +83,26 @@ func shellFamily(shell string) string {
 	return "posix"
 }
 
-// resolveAliasTarget figures out which file we should be mutating given
-// the user's optional --shell / --file overrides plus $SHELL. The first
-// return value is the absolute file path; the second is the shell family
-// ("fish" or "posix") used for quoting and parsing.
-func resolveAliasTarget(shellFlag, fileFlag string) (string, string, error) {
+// shellFromFilename guesses the shell behind an rc file, for --file
+// given without --shell. Zsh owns the ".z*" family plus anything
+// spelling out "zsh"; everything unrecognised is plain sh.
+func shellFromFilename(path string) string {
+	base := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.HasSuffix(base, ".fish"):
+		return "fish"
+	case strings.Contains(base, "zsh"), strings.HasPrefix(base, ".z"):
+		return "zsh"
+	default:
+		return "sh"
+	}
+}
+
+// resolveShellTarget figures out which file we should be mutating given
+// the user's optional --shell / --file overrides plus $SHELL. It returns
+// the absolute file path and the raw shell name; callers collapse that
+// name to whatever family their own syntax needs.
+func resolveShellTarget(shellFlag, fileFlag string) (string, string, error) {
 	if fileFlag != "" {
 		abs, err := filepath.Abs(fileFlag)
 		if err != nil {
@@ -93,14 +110,9 @@ func resolveAliasTarget(shellFlag, fileFlag string) (string, string, error) {
 		}
 		shell := shellFlag
 		if shell == "" {
-			// Infer family from filename when --file is used without --shell.
-			if strings.HasSuffix(abs, ".fish") {
-				shell = "fish"
-			} else {
-				shell = "posix"
-			}
+			shell = shellFromFilename(abs)
 		}
-		return abs, shellFamily(shell), nil
+		return abs, shell, nil
 	}
 	shell := shellFlag
 	if shell == "" {
@@ -110,7 +122,17 @@ func resolveAliasTarget(shellFlag, fileFlag string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	return path, shellFamily(shell), nil
+	return path, shell, nil
+}
+
+// resolveAliasTarget resolves the target rc file and collapses its shell
+// to the alias family ("fish" or "posix") used for quoting and parsing.
+func resolveAliasTarget(shellFlag, fileFlag string) (string, string, error) {
+	target, shell, err := resolveShellTarget(shellFlag, fileFlag)
+	if err != nil {
+		return "", "", err
+	}
+	return target, shellFamily(shell), nil
 }
 
 // buildAliasLine assembles the exact text we will append for an alias

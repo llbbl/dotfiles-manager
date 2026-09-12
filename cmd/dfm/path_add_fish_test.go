@@ -39,13 +39,11 @@ func TestPathAdd_Fish_FirstAddCreatesEntry(t *testing.T) {
 	if !bytes.Contains(got, []byte(closeTok)) {
 		t.Errorf("missing close marker %q in:\n%s", closeTok, got)
 	}
-	// Body shape sanity: fish for-loop, contains-guard, set -gx with
-	// prepend direction, trailing `set -e`. Spec §5.3 fragments.
+	// Body shape sanity: fish for-loop delegating to fish_add_path, with
+	// prepend direction and a trailing `set -e`.
 	expectFragments := []string{
 		"for __dfm_d in /a\n",
-		"    if not contains -- $__dfm_d $PATH\n",
-		"        set -gx PATH $__dfm_d $PATH\n",
-		"    end\n",
+		"    fish_add_path --path --move $__dfm_d\n",
 		"end\n",
 		"set -e __dfm_d\n",
 	}
@@ -112,7 +110,7 @@ func TestPathAdd_Fish_SecondAddMutatesInPlace(t *testing.T) {
 	}
 }
 
-// --append flips the fish set line direction to `$PATH $__dfm_d`.
+// --append adds fish_add_path's --append flag.
 func TestPathAdd_Fish_AppendDirection(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	canonical, _ := writeTrackedNamed(t, ctx, "config.fish", "")
@@ -127,11 +125,8 @@ func TestPathAdd_Fish_AppendDirection(t *testing.T) {
 	}
 
 	got, _ := os.ReadFile(canonical)
-	if !bytes.Contains(got, []byte("        set -gx PATH $PATH $__dfm_d\n")) {
-		t.Errorf("missing append-direction fish set line in:\n%s", got)
-	}
-	if bytes.Contains(got, []byte("set -gx PATH $__dfm_d $PATH")) {
-		t.Errorf("unexpected prepend-direction set line in append block:\n%s", got)
+	if !bytes.Contains(got, []byte("    fish_add_path --path --move --append $__dfm_d\n")) {
+		t.Errorf("missing append-direction fish_add_path line in:\n%s", got)
 	}
 }
 
@@ -177,7 +172,12 @@ func TestPathAdd_Fish_IdempotencyOnResource(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	canonical, _ := writeTrackedNamed(t, ctx, "config.fish", "")
 
-	for _, dir := range []string{"/tmp/dfm-fish-a", "/tmp/dfm-fish-b"} {
+	// Real directories: fish_add_path is the one renderer whose target
+	// may care whether the dir exists.
+	dirs := pathDirs(t, "a", "b")
+	managed := []string{dirs["a"], dirs["b"]}
+
+	for _, dir := range managed {
 		cmd := newPathCmd()
 		cmd.SetContext(ctx)
 		cmd.SetOut(&bytes.Buffer{})
@@ -189,8 +189,8 @@ func TestPathAdd_Fish_IdempotencyOnResource(t *testing.T) {
 	}
 
 	// Source the file 3x in fish with a clean PATH, then count
-	// occurrences of each managed dir. Fish's "set -gx PATH ..." takes
-	// space-separated args, so `echo $PATH` joins entries with spaces.
+	// occurrences of each managed dir. Fish's $PATH is a list, so
+	// `echo $PATH` joins entries with spaces.
 	script := fmt.Sprintf(
 		`set -gx PATH /usr/bin /bin; source %s; source %s; source %s; echo $PATH`,
 		canonical, canonical, canonical,
@@ -202,7 +202,7 @@ func TestPathAdd_Fish_IdempotencyOnResource(t *testing.T) {
 	pathLine := strings.TrimSpace(string(out))
 	parts := strings.Fields(pathLine)
 
-	for _, dir := range []string{"/tmp/dfm-fish-a", "/tmp/dfm-fish-b"} {
+	for _, dir := range managed {
 		count := 0
 		for _, p := range parts {
 			if p == dir {

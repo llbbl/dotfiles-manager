@@ -1,0 +1,7 @@
+# dfm:path:58005654 >>>  updated=2026-01-02T03:04:05Z  direction=append  dirs=/a:/b:/c
+# Assumes zsh's default tie between $path and $PATH, so no export is needed.
+for __dfm_d in /a /b /c; do
+  path=(${path:#$__dfm_d} $__dfm_d)
+done
+unset __dfm_d
+# dfm:path:58005654 <<<
