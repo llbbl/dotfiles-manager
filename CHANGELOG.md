@@ -1,11 +1,12 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [unreleased]
+## [1.9.9] - 2026-09-12
 
 ### Documentation
 
 - Ship a Claude Code plugin with the /dfm:manage skill (#69)
+- Lead install with Homebrew and trim the first-run path (#70)
 ## [1.9.8] - 2026-09-12
 
 ### Bug Fixes
