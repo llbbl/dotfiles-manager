@@ -239,11 +239,20 @@ func (m *Manager) List(ctx context.Context, path string) ([]Snapshot, error) {
 	return out, nil
 }
 
-// Get returns the snapshot with the given ID.
+// Get returns the snapshot with the given ID, which may be any
+// unambiguous prefix of one. An ambiguous prefix returns
+// *store.AmbiguousIDError.
 func (m *Manager) Get(ctx context.Context, id string) (Snapshot, error) {
+	full, err := m.s.ResolveID(ctx, "snapshots", id)
+	if err != nil {
+		if errors.Is(err, store.ErrIDNotFound) {
+			return Snapshot{}, ErrSnapshotNotFound
+		}
+		return Snapshot{}, err
+	}
 	row := m.s.DB().QueryRowContext(ctx,
 		`SELECT id, file_id, path, hash, size, reason, created_at, storage_path
-		 FROM snapshots WHERE id = ?`, id)
+		 FROM snapshots WHERE id = ?`, full)
 	s, err := scanSnapshot(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
@@ -293,7 +302,7 @@ func (m *Manager) Restore(ctx context.Context, id, dest string, opts RestoreOpti
 		return "", 0, fmt.Errorf("rename dest: %w", err)
 	}
 	audit.Log(ctx, "snapshot.restored", map[string]any{
-		"id":   id,
+		"id":   snap.ID,
 		"dest": dest,
 		"size": int64(len(data)),
 	})

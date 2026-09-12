@@ -296,3 +296,187 @@ func TestLogCmd_FilterSuggestion(t *testing.T) {
 		}
 	}
 }
+
+// insertSuggestionWithID seeds a pending suggestion under a caller-chosen
+// id so tests can control prefix collisions.
+func insertSuggestionWithID(t *testing.T, ctx context.Context, s *store.Store, id string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO suggestions (id, file_id, provider, prompt, diff, status, created_at)
+		 VALUES (?, NULL, 'fake', 'file: x', 'diff', 'pending', ?)`, id, now); err != nil {
+		t.Fatalf("insert %s: %v", id, err)
+	}
+}
+
+// trackFixtureWithSuggestion tracks a fixture file and seeds one pending
+// suggestion against it, returning the fixture path and suggestion id.
+func trackFixtureWithSuggestion(t *testing.T, ctx context.Context, s *store.Store) (string, string) {
+	t.Helper()
+	fix := filepath.Join(t.TempDir(), "fixture.txt")
+	if err := os.WriteFile(fix, []byte("# fixture\nfoo=bar\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	canonical, display, _ := tracker.Resolve(fix)
+	file, err := tracker.Track(ctx, s, canonical, display, tracker.TrackOptions{SkipSecretCheck: true})
+	if err != nil {
+		t.Fatalf("track: %v", err)
+	}
+	diff := "--- a/fixture.txt\n+++ b/fixture.txt\n@@ -1,2 +1,2 @@\n # fixture\n-foo=bar\n+foo=baz\n"
+	return fix, insertSuggestionCmd(t, ctx, s, file.ID, diff)
+}
+
+func TestApplyCmd_AcceptsIDCopiedFromSuggestionsTable(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := config.WithContext(env.Ctx, env.Cfg)
+	fix, fullID := trackFixtureWithSuggestion(t, ctx, env.Store)
+
+	listOut, _, err := runCmd(t, newSuggestionsCmd(), ctx)
+	if err != nil {
+		t.Fatalf("suggestions: %v", err)
+	}
+	shortID := firstTableID(t, listOut)
+	if len(shortID) != 10 || !strings.HasPrefix(fullID, shortID) {
+		t.Fatalf("short id %q is not a 10-char prefix of %q", shortID, fullID)
+	}
+
+	if _, _, err := runCmd(t, newApplyCmd(), ctx, "--yes", "--json", shortID); err != nil {
+		t.Fatalf("apply with truncated id: %v", err)
+	}
+
+	got, _ := os.ReadFile(fix)
+	if string(got) != "# fixture\nfoo=baz\n" {
+		t.Errorf("file = %q", got)
+	}
+	// The status update must have used the resolved id, not the prefix.
+	sg, err := apply.NewRepo(env.Store).Get(ctx, fullID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if sg.Status != apply.StatusApplied {
+		t.Errorf("status = %s, want %s", sg.Status, apply.StatusApplied)
+	}
+}
+
+func TestSuggestionsCmd_JSONKeepsFullID(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := config.WithContext(env.Ctx, env.Cfg)
+	_, fullID := trackFixtureWithSuggestion(t, ctx, env.Store)
+
+	out, _, err := runCmd(t, newSuggestionsCmd(), ctx, "--json")
+	if err != nil {
+		t.Fatalf("suggestions --json: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("json: %v -- %s", err, out)
+	}
+	if len(rows) != 1 || rows[0]["id"] != fullID {
+		t.Fatalf("json rows = %v, want single row with id %s", rows, fullID)
+	}
+	if len(fullID) != 26 {
+		t.Errorf("fixture id length = %d, want 26", len(fullID))
+	}
+}
+
+func TestApplyCmd_AmbiguousPrefixListsCandidates(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := config.WithContext(env.Ctx, env.Cfg)
+
+	const (
+		idA = "01HQAAAAAAAAAAAAAAAAAAAAAA"
+		idB = "01HQAAAAAABBBBBBBBBBBBBBBB"
+	)
+	insertSuggestionWithID(t, env.Ctx, env.Store, idA)
+	insertSuggestionWithID(t, env.Ctx, env.Store, idB)
+
+	_, stderr, err := runCmd(t, newApplyCmd(), ctx, "--yes", idA[:10])
+	var ee *exitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("want exitError, got %v", err)
+	}
+	if ee.code != exitAmbiguousID {
+		t.Errorf("exit = %d, want %d", ee.code, exitAmbiguousID)
+	}
+	for _, id := range []string{idA, idB} {
+		if !strings.Contains(stderr, id) {
+			t.Errorf("stderr missing candidate %s:\n%s", id, stderr)
+		}
+	}
+}
+
+func TestApplyCmd_UnknownPrefixSaysPrefixMatchedNothing(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := config.WithContext(env.Ctx, env.Cfg)
+
+	_, _, err := runCmd(t, newApplyCmd(), ctx, "--yes", "NOPE")
+	var ee *exitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("want exitError, got %v", err)
+	}
+	if ee.code != exitNotFound {
+		t.Errorf("exit = %d, want %d", ee.code, exitNotFound)
+	}
+	if !strings.Contains(ee.msg, "no suggestion matches id prefix") {
+		t.Errorf("msg = %q", ee.msg)
+	}
+}
+
+func TestLogCmd_FilterSuggestionByPrefix(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, s, cfg := env.Ctx, env.Store, env.Cfg
+	ctx = config.WithContext(ctx, cfg)
+
+	sid := "aaaaaaaaaabbbbbbbbbbcccccc"
+	insertSuggestionWithID(t, ctx, s, sid)
+	if err := audit.Default().Log(ctx, "suggest", map[string]any{"suggestion_id": sid}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newLogCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--suggestion", sid[:10], "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
+		t.Fatalf("unmarshal: %v\nout: %s", err, out.String())
+	}
+	// The audit row stores the full id, so an unresolved prefix matches nothing.
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1: %s", len(entries), out.String())
+	}
+}
+
+func TestLogCmd_AmbiguousSuggestionPrefix(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, s, cfg := env.Ctx, env.Store, env.Cfg
+	ctx = config.WithContext(ctx, cfg)
+
+	insertSuggestionWithID(t, ctx, s, "aaaaaaaaaabbbbbbbbbbcccccc")
+	insertSuggestionWithID(t, ctx, s, "aaaaaaaaaabbbbbbbbbbdddddd")
+
+	cmd := newLogCmd()
+	cmd.SetContext(ctx)
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"--suggestion", "aaaaaaaaaa", "--json"})
+	err := cmd.Execute()
+
+	var ee *exitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("execute = %v, want exitError", err)
+	}
+	if ee.code != exitAmbiguousID {
+		t.Errorf("exit = %d, want %d", ee.code, exitAmbiguousID)
+	}
+	for _, want := range []string{"aaaaaaaaaabbbbbbbbbbcccccc", "aaaaaaaaaabbbbbbbbbbdddddd"} {
+		if !strings.Contains(errBuf.String(), want) {
+			t.Errorf("stderr missing %s: %s", want, errBuf.String())
+		}
+	}
+}

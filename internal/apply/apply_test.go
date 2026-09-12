@@ -248,3 +248,72 @@ func TestRepo_List_FiltersStatus(t *testing.T) {
 		t.Errorf("all = %d, want 2", len(all))
 	}
 }
+
+// Guards the id threading: every entry point resolves a prefix, and the
+// status UPDATE must bind the resolved id. Binding the prefix instead
+// matches no row and succeeds silently.
+func TestRepo_PrefixResolution(t *testing.T) {
+	ctx, s, _ := setupApplyEnv(t)
+	fix := filepath.Join(t.TempDir(), "x.txt")
+	if err := os.WriteFile(fix, []byte("hi\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	canonical, display, _ := tracker.Resolve(fix)
+	file, _ := tracker.Track(ctx, s, canonical, display, tracker.TrackOptions{SkipSecretCheck: true})
+	id := insertSuggestion(t, ctx, s, file.ID, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-hi\n+hello\n")
+	prefix := id[:10]
+
+	repo := NewRepo(s)
+
+	sg, err := repo.Get(ctx, prefix)
+	if err != nil {
+		t.Fatalf("Get(prefix): %v", err)
+	}
+	if sg.ID != id {
+		t.Errorf("Get(prefix).ID = %q, want %q", sg.ID, id)
+	}
+
+	got, err := repo.ResolveFile(ctx, prefix)
+	if err != nil {
+		t.Fatalf("ResolveFile(prefix): %v", err)
+	}
+	if got.ID != file.ID {
+		t.Errorf("ResolveFile(prefix).ID = %d, want %d", got.ID, file.ID)
+	}
+
+	if err := repo.Reject(ctx, prefix); err != nil {
+		t.Fatalf("Reject(prefix): %v", err)
+	}
+	// Re-read by full id: a prefix-bound UPDATE leaves this pending.
+	after, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get(full): %v", err)
+	}
+	if after.Status != StatusRejected {
+		t.Errorf("status = %q, want %q", after.Status, StatusRejected)
+	}
+
+	if _, err := repo.Get(ctx, "zzzzzzzzzz"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get(no match) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRepo_AmbiguousPrefix(t *testing.T) {
+	ctx, s, _ := setupApplyEnv(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range []string{"aaaaaaaaaabbbbbbbbbbcccccc", "aaaaaaaaaabbbbbbbbbbdddddd"} {
+		if _, err := s.DB().ExecContext(ctx,
+			`INSERT INTO suggestions (id, provider, prompt, diff, status, created_at)
+			 VALUES (?, 'fake', 'p', 'd', 'pending', ?)`, id, now); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+
+	var amb *store.AmbiguousIDError
+	if _, err := NewRepo(s).Get(ctx, "aaaaaaaaaa"); !errors.As(err, &amb) {
+		t.Fatalf("Get(ambiguous) = %v, want AmbiguousIDError", err)
+	}
+	if len(amb.Candidates) != 2 {
+		t.Errorf("candidates = %v, want 2", amb.Candidates)
+	}
+}

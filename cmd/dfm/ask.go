@@ -19,9 +19,10 @@ var providerFactory = func(cfg *config.Config) (ai.Provider, error) {
 }
 
 const (
-	exitAIEmpty   = 3
-	exitNotFound  = 4
-	exitAIGeneric = 5
+	exitAIEmpty     = 3
+	exitNotFound    = 4
+	exitAIGeneric   = 5
+	exitAmbiguousID = 7
 )
 
 // newAskCmd builds the `dfm ask` command, which sends a free-form
