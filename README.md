@@ -10,24 +10,30 @@ Status: rapid iteration — version numbers track conventional-commit footers (s
 
 ## Install
 
-Grab a pre-built binary from the [Releases page](https://github.com/llbbl/dotfiles-manager/releases) — darwin and linux, arm64 and amd64. Full step-by-step (download, checksum, extract, install onto your `PATH`) is in [docs/install.md](./docs/install.md).
-
-## First-run setup
-
-After installing the binary, run `dfm init` once to set up the private backup repo and (optionally) the libSQL state store:
-
 ```sh
-# Clone an existing private backup repo
-dfm init --remote git@github.com:you/dotfiles-backup.git
-
-# Or create a new private repo on your GitHub account in one step
-dfm init --remote git@github.com:you/dotfiles-backup.git --create-remote
-
-# Optionally provision a Turso libSQL DB for the state store
-dfm init --turso
+brew install llbbl/tap/dfm
 ```
 
-See [`dfm init --help`](./docs/commands.md) for all flags. State is stored at `~/.local/share/dotfiles/` and config at `~/.config/dotfiles/config.toml`; an [example config](./config.example.toml) ships in the repo.
+Not a Homebrew user? `gh`, `curl`, and manual-download recipes are in [docs/install.md](./docs/install.md).
+
+## First run
+
+```sh
+dfm init            # config, state store, and private backup repo
+dfm track ~/.zshrc  # start managing a file
+dfm status          # what changed since last sync
+dfm sync            # mirror tracked files to the backup repo
+```
+
+`dfm init` clones an existing private backup repo, or creates one for you:
+
+```sh
+dfm init --remote git@github.com:you/dotfiles-backup.git
+dfm init --remote git@github.com:you/dotfiles-backup.git --create-remote
+dfm init --turso    # optionally provision a Turso libSQL state store
+```
+
+Config lands at `~/.config/dotfiles/config.toml`, state at `~/.local/share/dotfiles/`. An [example config](./config.example.toml) ships in the repo. Full flag reference: [docs/commands.md](./docs/commands.md).
 
 ## Build from source
 
@@ -35,7 +41,6 @@ See [`dfm init --help`](./docs/commands.md) for all flags. State is stored at `~
 just install              # tidy and download Go module deps
 just build-versioned      # build ./bin/dfm with version info baked in
 ./bin/dfm version
-./bin/dfm --help          # full command surface
 ```
 
 ## Claude Code plugin
