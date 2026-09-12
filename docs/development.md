@@ -94,7 +94,8 @@ Tests never touch the user's real Turso database or real GitHub repos. State-sto
 
 ## Project conventions
 
-- **Pre-release**: direct commits to `main` are fine. Once the project cuts v0.1 or opens to external contributors, the workflow shifts to feature branches + pull requests.
+- **Code-bearing work goes on a feature branch with a pull request.** Direct commits to `main` are no longer the workflow.
+- **A user-facing CLI change is not finished until [`docs/commands.md`](./commands.md), the tests, and any affected [`skills/*/SKILL.md`](../skills) are updated in the same change.** The skills document the CLI's behaviour, so they drift into describing a tool that no longer exists whenever a flag moves and only `cmd/` and `internal/` are touched.
 - **No third-party Go dependencies are added casually.** Stdlib first; current direct deps are limited to cobra, BurntSushi/toml, tursogo, and pressly/goose. Any addition needs a clear justification.
 - **Security**: never log secrets, API tokens, Turso URLs beyond `scheme://host`, prompt or response bodies, or file contents. Paths and display paths are okay (they already appear in the audit log).
 

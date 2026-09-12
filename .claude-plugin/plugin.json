@@ -1,0 +1,20 @@
+{
+  "name": "dfm",
+  "description": "Track, back up, and safely modify dotfiles with dfm: managed rc-file blocks for PATH and aliases, automatic pre-edit snapshots, a private backup repo, and reviewable AI patches. Requires the `dfm` binary on PATH.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Logan Lindquist Land",
+    "email": "logan@llbbl.com"
+  },
+  "homepage": "https://github.com/llbbl/dotfiles-manager",
+  "repository": "https://github.com/llbbl/dotfiles-manager",
+  "license": "FSL-1.1-MIT",
+  "keywords": [
+    "dotfiles",
+    "shell",
+    "zsh",
+    "bash",
+    "path",
+    "backup"
+  ]
+}

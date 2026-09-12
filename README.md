@@ -38,6 +38,17 @@ just build-versioned      # build ./bin/dfm with version info baked in
 ./bin/dfm --help          # full command surface
 ```
 
+## Claude Code plugin
+
+A Claude Code plugin ships from this repository so an AI assistant driving `dfm` knows the rules that are not in the flag reference — that managed rc-file blocks are generated and must not be hand-edited, that switching the state backend does not migrate rows, and that every mutation leaves a snapshot to roll back to.
+
+```
+/plugin marketplace add llbbl/dotfiles-manager
+/plugin install dfm@llbbl-dotfiles-manager
+```
+
+That installs the `/dfm:manage` skill. Source is in [`skills/manage/SKILL.md`](./skills/manage/SKILL.md).
+
 ## Documentation
 
 - [Install](./docs/install.md) — install from GitHub Releases.

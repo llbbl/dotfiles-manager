@@ -1,0 +1,18 @@
+{
+  "name": "llbbl-dotfiles-manager",
+  "owner": {
+    "name": "Logan Lindquist Land",
+    "email": "logan@llbbl.com"
+  },
+  "metadata": {
+    "description": "Marketplace for the dfm Claude Code plugin",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "dfm",
+      "source": "./",
+      "description": "Drive the dfm CLI safely: managed PATH and alias blocks, snapshot-based rollback, backup-repo sync, and AI suggestion review. Bundles the /dfm:manage skill."
+    }
+  ]
+}
