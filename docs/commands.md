@@ -59,6 +59,19 @@ The wrapper uses `#` comments, which work in both POSIX shells (bash/zsh/sh) and
 
 Group names must match `[A-Za-z][A-Za-z0-9_-]*` so the value is safe to interpolate into the fence comment.
 
+#### Aliases do not work in bash scripts
+
+An alias is an interactive-shell convenience. Non-interactive bash — every `bash script.sh`, every `#!/bin/bash` file, every `bash -c` — does not expand aliases at all unless the script itself runs `shopt -s expand_aliases` first, and even then the alias has to be defined before the line that uses it is *parsed*, which rules out defining and using one in the same block. zsh expands aliases in scripts, so something that works there will silently do nothing under bash.
+
+If you need it to work in a script, an alias is the wrong tool. Use a shell function, or a real executable on `PATH`:
+
+```sh
+# works everywhere, including non-interactive bash
+gc() { git commit -m "$1"; }
+```
+
+Keep aliases for what you type at a prompt.
+
 #### Quoting the command argument
 
 `<command>` is a single shell argument passed to `dfm`. That means **your shell** parses the quoting before dfm ever sees the string — dfm just receives whatever bytes the shell hands it. Once dfm has the string it always wraps it in single quotes inside the rc file (and escapes embedded single quotes correctly per shell family — POSIX uses `'\''`, fish uses `\'`).
@@ -231,6 +244,66 @@ Flags:
 - `--shell <bash|zsh|fish|profile>` — pick which rc file to read entries from.
 - `--file <path>` — explicit rc file. Mutually exclusive with `--shell`.
 - `--fish` — render the fish fragment regardless of the target's own family.
+
+### `dfm path hook install`
+
+Write the generated fragment to `$XDG_CONFIG_HOME/dotfiles/` and install a one-time hook into the shell's startup files so every new shell sources it.
+
+```sh
+dfm path hook install                    # follows $SHELL
+dfm path hook install --shell zsh
+dfm path hook install --dry-run          # name every file that would change
+```
+
+The hook is fixed, three lines, and marker-delimited:
+
+```sh
+# >>> dfm:env >>>
+__dfm_env="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/env.sh"
+[ -r "$__dfm_env" ] && . "$__dfm_env"
+unset __dfm_env
+# <<< dfm:env <<<
+```
+
+The fragment path is resolved at shell startup, not baked in at install time, so the rc file stays portable to any machine your backup repo reaches. The `[ -r ]` guard (`test -r` in fish) makes a missing fragment a no-op rather than an error: the shell starts normally with `PATH` untouched.
+
+Which files each shell gets:
+
+| shell | files |
+|---|---|
+| zsh | `~/.zshenv` **and** `~/.zprofile` |
+| bash | `~/.bashrc`, plus the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile` that exists |
+| fish | `~/.config/fish/config.fish` |
+| profile | `~/.profile` |
+
+**zsh needs two files.** `~/.zshenv` runs on every zsh invocation, which covers non-login shells and scripts. Login shells also run `/etc/zprofile`, which on macOS calls `path_helper` — that rebuilds `PATH` from `/etc/paths` and `/etc/paths.d` and demotes anything `.zshenv` prepended to the back. The `~/.zprofile` hook re-sources the fragment after `path_helper` has run, which is the only way a managed dir stays in front inside `zsh -l`. Both hooks firing in one shell is harmless: the fragment's blocks are idempotent, so a managed dir appears exactly once.
+
+**bash picks one login file.** Login bash reads the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile` that exists and stops there, so the hook follows that same order. Writing to a file a shadowing one precedes would install a hook bash never sources. If none of the three exists, `~/.profile` is created.
+
+Each rc file the hook needs is tracked automatically if it isn't already, then edited through the normal snapshot path — so the change is in the audit log and recoverable like any other dfm edit. Newly tracked files are named in the output. The file is created (mode 0644) if it doesn't exist.
+
+Tracking runs the same secret scan `dfm track` does, and an rc file holding something that looks like a credential — `export ACME_API_KEY=…` is enough — stops the install. Pass `--force` to track and install anyway. Nothing is tracked and no hook is written when the scan refuses, though the regenerated fragment may already be on disk; it is harmless there, since nothing sources it until a hook exists.
+
+Installing twice is a no-op: the files come out byte-identical and the command says so. The fragment itself is generated output, not a dotfile — it is never tracked, never snapshotted, and never mirrored to the backup repo, because it is regenerable from the rc file at any time.
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — which shell's file set to operate on. Defaults to `$SHELL`.
+- `--dry-run` — print what would change, including which files would be tracked, and touch nothing.
+- `--force` — track an rc file even if it trips the secret scan.
+
+An unrecognised `--shell` is rejected rather than falling back to `~/.profile`, so a typo cannot create a startup file for a shell you did not name.
+
+### `dfm path hook remove`
+
+Strip the `dfm:env` hook block from the same file set.
+
+```sh
+dfm path hook remove --shell zsh
+dfm path hook remove --dry-run
+```
+
+The rest of the file — including its trailing newline structure — is left byte-identical, so a remove restores exactly what was there before the install. Removing when no hook is present is not an error. The fragment file is left in place; nothing sources it once the hooks are gone.
 
 ### `dfm path import`
 

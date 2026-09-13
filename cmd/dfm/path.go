@@ -310,7 +310,7 @@ func newPathCmd() *cobra.Command {
 		Short: "Manage PATH entries in tracked rc files (coalesced, idempotent)",
 	}
 	cmd.AddCommand(newPathAddCmd(), newPathRemoveCmd(), newPathListCmd(), newPathImportCmd(),
-		newPathFragmentCmd())
+		newPathFragmentCmd(), newPathHookCmd())
 	return cmd
 }
 
