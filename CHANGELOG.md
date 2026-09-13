@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.0] - 2026-09-13
+
+### Features
+
+- Move managed PATH entries into the fragment with dfm path migrate (#83)
 ## [1.12.0] - 2026-09-13
 
 ### Features
