@@ -181,7 +181,7 @@ dfm path add /opt/homebrew/sbin --append
 Flags:
 
 - `--shell <bash|zsh|fish|profile>` — pick which rc file to target (defaults to `$SHELL`).
-- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--file <path>` — explicit rc file. Mutually exclusive with `--shell`.
 - `--append` — write into the append-direction entry (default: prepend).
 - `--force` — bypass the secrets pre-flight scan. Does NOT bypass dedup — adding a dir that's already on the managed entry still exits 4.
 
@@ -194,7 +194,7 @@ Remove `<dir>` from the dfm-managed PATH entry. If the entry has multiple dirs t
 Flags:
 
 - `--shell <bash|zsh|fish|profile>` — pick which rc file to target.
-- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--file <path>` — explicit rc file. Mutually exclusive with `--shell`.
 
 Exit 4 if `<dir>` is not on any dfm-managed entry in the target file.
 
@@ -207,8 +207,30 @@ List the dirs on each dfm-managed PATH entry in the target rc file. Default outp
 Flags:
 
 - `--shell <bash|zsh|fish|profile>` — pick which rc file to target.
-- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--file <path>` — explicit rc file. Mutually exclusive with `--shell`.
 - `--json` — JSON output.
+
+### `dfm path fragment`
+
+Print the dfm-managed PATH entries of the target rc file re-rendered as a standalone, sourceable fragment. Read-only — nothing is written, and no rc file is touched.
+
+```sh
+dfm path fragment                  # the target's own family
+dfm path fragment --shell zsh      # POSIX syntax, for sh, bash and zsh
+dfm path fragment --fish           # fish syntax
+```
+
+There are two syntax families because fish cannot source POSIX syntax. `env.sh` serves sh, bash **and** zsh — one file has to cover all three, so zsh gets the POSIX body rather than its native `path=()` one; `env.fish` serves fish. Their canonical locations are `$XDG_CONFIG_HOME/dotfiles/env.sh` and `$XDG_CONFIG_HOME/dotfiles/env.fish`, named in each fragment's header.
+
+An rc file with no dfm-managed entries is not an error: you get the header and nothing else.
+
+Which rc file the entries are read from and which syntax they are rendered in are separate choices. The target's own family is the default — `--shell fish` prints the fish fragment, and `--shell zsh` prints the POSIX one because `env.sh` is what zsh ends up sourcing. `--fish` asks for the fish fragment from whatever entries the target holds.
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — pick which rc file to read entries from.
+- `--file <path>` — explicit rc file. Mutually exclusive with `--shell`.
+- `--fish` — render the fish fragment regardless of the target's own family.
 
 ### `dfm path import`
 
@@ -233,7 +255,7 @@ Apply takes a pre-edit snapshot first, then splices the bare/guarded importable 
 Flags:
 
 - `--shell <bash|zsh|profile>` — pick which rc file to target. Fish is not supported by `import` (fish's PATH conventions are different enough that there's nothing to fold).
-- `--file <path>` — explicit rc file (overrides `--shell`).
+- `--file <path>` — explicit rc file. Mutually exclusive with `--shell`.
 - `--dry-run` — print the proposal and exit without writing.
 - `-y`, `--yes` — apply without prompting. Required when stdin is non-interactive (a piped or redirected shell errors out without `--yes` or `--dry-run`).
 - `--json` — emit a JSON report instead of human-readable text. JSON mode keeps stdout clean even when the interactive prompt fires (prompt text goes to stderr).

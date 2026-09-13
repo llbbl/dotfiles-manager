@@ -138,6 +138,21 @@ directory, so re-adding one spelling of an existing entry exits 4.
 Quoting is the usual trap for alias commands: single-quote anything with shell
 metacharacters so the user's shell does not expand them at invocation time.
 
+### Inspect the generated PATH fragment
+
+```sh
+dfm path fragment            # the target's own family
+dfm path fragment --shell zsh # POSIX syntax, for sh, bash and zsh
+dfm path fragment --fish     # fish syntax
+```
+
+Read-only: it re-renders the target rc file's managed entries as a standalone
+sourceable file and prints it. `env.sh` covers sh, bash and zsh because fish cannot
+source POSIX syntax and one file has to serve the other three; `env.fish` covers fish.
+Which syntax you get follows the target, so a bare `dfm path fragment` prints the fish
+fragment when `$SHELL` is fish; `--fish` forces it from any target. An rc file with no
+managed entries prints just the header.
+
 ### Edit a tracked file
 
 Use `dfm` rather than writing to the file directly, so the snapshot is taken:

@@ -741,7 +741,7 @@ func newPathImportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|profile)")
-	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
+	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (mutually exclusive with --shell)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the proposal without writing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "apply without prompting (non-interactive)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit a JSON report instead of human-readable text")
