@@ -25,6 +25,15 @@ type Config struct {
 	State   StateConfig   `toml:"state"`
 	Backup  BackupConfig  `toml:"backup"`
 	Runtime RuntimeConfig `toml:"runtime"`
+	Path    PathConfig    `toml:"path"`
+}
+
+// PathConfig records where dfm writes managed PATH entries. UseFragment
+// is off until `dfm path migrate` turns it on; once on, the generated
+// fragment is the source of truth and the shell's rc file is no longer
+// read or written for PATH.
+type PathConfig struct {
+	UseFragment bool `toml:"use_fragment"`
 }
 
 // RuntimeConfig groups settings that affect how the dfm process starts
@@ -295,6 +304,29 @@ func (c *Config) EncodeTOML() ([]byte, error) {
 		return nil, err
 	}
 	return []byte(sb.String()), nil
+}
+
+// SavedAuthToken returns the state.auth_token already written in the
+// config file, or "" when the file has none. Load overlays
+// TURSO_AUTH_TOKEN from the environment, so a Config in hand can carry a
+// token the file never held; write this back instead to keep an env-only
+// token out of the file without deleting one the file owns. A missing
+// file is not an error.
+func SavedAuthToken(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat %s: %w", path, err)
+	}
+	var onDisk Config
+	if _, err := toml.DecodeFile(path, &onDisk); err != nil {
+		return "", fmt.Errorf("decode %s: %w", path, err)
+	}
+	return onDisk.State.AuthToken, nil
 }
 
 // FragmentPath returns the canonical location of a generated shell

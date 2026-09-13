@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +9,6 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/fsx"
-	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
@@ -181,17 +178,26 @@ func newPathHookRemoveCmd() *cobra.Command {
 	return cmd
 }
 
+// resolveHookShell applies the --shell flag or falls back to $SHELL.
+// detectShell falls back to profile for anything unfamiliar; an explicit
+// flag gets no such latitude, since a typo would create and write a
+// startup file for the wrong shell.
+func resolveHookShell(cmdName, shellFlag string) (string, error) {
+	if shellFlag == "" {
+		return detectShell(), nil
+	}
+	if !knownPathHookShell(shellFlag) {
+		return "", exitf(exitResolveErr,
+			"%s: unknown --shell %q (want bash, zsh, fish, sh or profile)", cmdName, shellFlag)
+	}
+	return shellFlag, nil
+}
+
 // runPathHook is the shared body of hook install and hook remove.
 func runPathHook(c *cobra.Command, shellFlag string, dryRun, force, install bool) error {
-	shell := shellFlag
-	if shell == "" {
-		// detectShell falls back to profile for anything unfamiliar; an
-		// explicit flag gets no such latitude, since a typo would create
-		// and write a startup file for the wrong shell.
-		shell = detectShell()
-	} else if !knownPathHookShell(shell) {
-		return exitf(exitResolveErr,
-			"path hook: unknown --shell %q (want bash, zsh, fish, sh or profile)", shell)
+	shell, err := resolveHookShell("path hook", shellFlag)
+	if err != nil {
+		return err
 	}
 	files, family, err := pathHookFiles(shell)
 	if err != nil {
@@ -218,15 +224,21 @@ func runPathHook(c *cobra.Command, shellFlag string, dryRun, force, install bool
 	return nil
 }
 
-// writePathFragment regenerates the sourceable fragment from the
-// shell's rc file. The fragment is generated output, not a dotfile: it
-// is never tracked, snapshotted, or mirrored to the backup repo.
+// writePathFragment regenerates the sourceable fragment from the shell's
+// rc file, which is safe only while that rc file still holds the managed
+// blocks. Once use_fragment is on it no longer does, so regenerating
+// would overwrite the user's whole PATH configuration with an empty
+// fragment.
 func writePathFragment(c *cobra.Command, shell, family string, dryRun bool) error {
 	rc, err := rcFileForShell(shell)
 	if err != nil {
 		return err
 	}
 	dest := config.FragmentPath(pathFragmentName(family))
+	if pathUseFragment(c.Context()) {
+		fmt.Fprintf(c.OutOrStdout(), "fragment %s is the source of truth; not regenerating\n", dest)
+		return nil
+	}
 	if dryRun {
 		fmt.Fprintf(c.OutOrStdout(), "would write fragment %s (from %s)\n", dest, rc)
 		return nil
@@ -302,46 +314,9 @@ func applyPathHookFile(c *cobra.Command, s *store.Store, path, family string, dr
 		}
 	}
 
-	file, canonical, err := resolveTracked(ctx, s, path)
+	file, err := writeTrackedEdit(c, s, "path hook", path, updated, action,
+		map[string]any{"family": family}, force)
 	if err != nil {
-		code, terr := runTrackOne(c, path, trackOneOptions{Force: force})
-		if terr != nil {
-			return terr
-		}
-		if code != 0 {
-			// runTrackOne's own message names --force, which belongs to
-			// dfm track; say which command the user is actually holding.
-			return exitf(code,
-				"path hook: could not track %s. Re-run with --force to install anyway", path)
-		}
-		if file, canonical, err = resolveTracked(ctx, s, path); err != nil {
-			return err
-		}
-	}
-
-	mgr, err := newSnapshotManager(ctx, s)
-	if err != nil {
-		return fmt.Errorf("snapshot manager: %w", err)
-	}
-	snap, err := snapshot.TakePreEdit(ctx, mgr, canonical, file)
-	if err != nil {
-		return err
-	}
-
-	mode := os.FileMode(0o644)
-	if info, serr := os.Stat(canonical); serr == nil {
-		mode = info.Mode().Perm()
-	}
-	if err := fsx.AtomicWrite(canonical, updated, mode); err != nil {
-		return fmt.Errorf("write %s: %w", canonical, err)
-	}
-
-	sum := sha256.Sum256(updated)
-	if err := tracker.RecordHashChange(ctx, s, file, hex.EncodeToString(sum[:]), snap.ID, action,
-		map[string]any{
-			"family":      family,
-			"snapshot_id": snap.ID,
-		}); err != nil {
 		return err
 	}
 

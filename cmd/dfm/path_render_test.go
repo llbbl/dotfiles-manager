@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -143,7 +144,7 @@ func TestResolvePathTarget_InfersShellFromFilename(t *testing.T) {
 		{"fixture.txt", "posix"},
 	} {
 		path := filepath.Join(dir, tc.base)
-		_, family, err := resolvePathTarget("", path)
+		_, family, err := resolvePathTarget(context.Background(), "", path)
 		if err != nil {
 			t.Fatalf("resolvePathTarget(%q): %v", tc.base, err)
 		}

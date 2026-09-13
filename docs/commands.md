@@ -284,7 +284,7 @@ Each rc file the hook needs is tracked automatically if it isn't already, then e
 
 Tracking runs the same secret scan `dfm track` does, and an rc file holding something that looks like a credential — `export ACME_API_KEY=…` is enough — stops the install. Pass `--force` to track and install anyway. Nothing is tracked and no hook is written when the scan refuses, though the regenerated fragment may already be on disk; it is harmless there, since nothing sources it until a hook exists.
 
-Installing twice is a no-op: the files come out byte-identical and the command says so. The fragment itself is generated output, not a dotfile — it is never tracked, never snapshotted, and never mirrored to the backup repo, because it is regenerable from the rc file at any time.
+Installing twice is a no-op: the files come out byte-identical and the command says so. Until you run `dfm path migrate`, the fragment is generated output, not a dotfile — it is never tracked, never snapshotted, and never mirrored to the backup repo, because it is regenerable from the rc file at any time. After a migrate that reverses: the fragment holds your configuration, it is tracked, and `hook install` stops regenerating it and says so.
 
 Flags:
 
@@ -304,6 +304,45 @@ dfm path hook remove --dry-run
 ```
 
 The rest of the file — including its trailing newline structure — is left byte-identical, so a remove restores exactly what was there before the install. Removing when no hook is present is not an error. The fragment file is left in place; nothing sources it once the hooks are gone.
+
+### `dfm path migrate`
+
+Move the dfm-managed PATH blocks out of your rc file and make the generated fragment their only home. Opt-in: until you run this, nothing about `dfm path` changes.
+
+```sh
+dfm path migrate --dry-run         # print every step, write nothing
+dfm path migrate                   # prompt, then move
+dfm path migrate --yes             # move without prompting
+```
+
+The steps run in this order, so no interruption can leave your entries with only one damaged copy on disk:
+
+1. Render the fragment from the rc file's managed blocks and write it to `$XDG_CONFIG_HOME/dotfiles/`.
+2. Install the `dfm:env` hooks, exactly as `dfm path hook install` does.
+3. Track the fragment.
+4. Set `use_fragment = true` under `[path]` in `config.toml`.
+5. Strip the managed blocks from the rc file, through the normal snapshot path.
+
+The last two are in that order on purpose. The flag is what tells `hook install` to stop regenerating the fragment, so stripping first would open a window — a failed config write, or a Ctrl-C — where the blocks are gone from the rc file while dfm still believes it can rebuild the fragment from it. Failing the other way round is harmless: the blocks are simply still in both places, which is exactly the state you were in before running migrate.
+
+**The fragment becomes a tracked dotfile.** That reverses what `hook install` says about it, and deliberately: before a migrate the fragment is a regenerable copy of the rc file, after one it holds the configuration itself, so it is snapshotted and mirrored to the backup repo like anything else you track. `dfm path hook install` stops regenerating it for the same reason — regenerating from an rc file that no longer has the blocks would overwrite your PATH configuration with an empty file.
+
+**After migrating, `dfm path add` / `remove` / `list` / `fragment` target the fragment** with no flag to remember. `--file <path>` still wins and still targets exactly the file you name; so does `--shell`, which names a shell's rc file. Everything outside the managed blocks is left in the rc file byte-identical, including the blank separator line an add wrote in front of a block.
+
+Running `migrate` when `use_fragment` is already on says so and changes nothing.
+
+**zsh entries render as POSIX in the fragment.** `env.sh` is shared by sh, bash and zsh, so a migrated zsh block uses the POSIX body rather than zsh's native `path=(...)`. The directories and their order are unchanged, and the POSIX body promotes an already-present dir and collapses duplicates the same way — but the text of the block in your file does change, which is visible if you diff it.
+
+`--dry-run` writes no fragment, no hook and no config, and edits no rc file. It does open the state database, creating and migrating it if this is a fresh install, because it resolves tracked files to report what would be tracked.
+
+To go back, in this order: `dfm path hook remove` to strip the hooks, then move the blocks back with `dfm path add --file <rc>` (or restore the pre-migrate snapshot — `dfm backups` lists it, `dfm restore <snapshot-id>` applies it), and only then set `use_fragment = false` in `config.toml`. Clearing the flag first and running `hook install` before the blocks are back walks into the regeneration path and overwrites the fragment from an rc file that has nothing in it.
+
+Flags:
+
+- `--shell <bash|zsh|fish|profile>` — which shell's rc file to migrate. Defaults to `$SHELL`.
+- `--dry-run` — print every step, including the config write, and write nothing.
+- `--yes`, `-y` — migrate without prompting. Required when there is no TTY to prompt on.
+- `--force` — track a file even if it trips the secret scan.
 
 ### `dfm path import`
 
