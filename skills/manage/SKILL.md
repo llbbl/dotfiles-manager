@@ -20,13 +20,14 @@ if you get it wrong.
 ```sh
 dfm version          # confirm the binary is on PATH
 dfm config path      # which config file is in play
+dfm config show      # effective config, credentials redacted
 dfm list             # what is already tracked
 dfm status           # clean / modified / missing / new per file
 ```
 
-Do **not** run `dfm config show` to orient yourself. It prints `[state].auth_token`
-in cleartext, and anything you print lands in a transcript. `dfm config path` plus
-reading the specific key you need is enough.
+`dfm config show` is safe: the auth token prints as `<redacted>` and the state URL is
+trimmed to `scheme://host`. Never add `--show-secrets` — it prints the real credential,
+and anything you print lands in a transcript.
 
 ## The rules that matter
 
@@ -268,7 +269,7 @@ the file untouched and the suggestion `pending`.
 ## What not to do
 
 - Do not hand-edit inside dfm markers, or reorder a managed block's lines.
-- Do not run `dfm config show`, which prints the auth token in cleartext.
+- Do not pass `--show-secrets` to `dfm config show`; plain `config show` is redacted.
 - Do not read or list `~/.lsm/` — it holds a private age key.
 - Do not print tokens, or a libSQL URL beyond `scheme://host`.
 - Do not run `dfm migrate`, `dfm prune`, or `dfm sync` speculatively. They are

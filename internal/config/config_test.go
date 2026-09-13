@@ -278,3 +278,39 @@ func TestSavedAuthToken(t *testing.T) {
 		t.Error("malformed config did not error")
 	}
 }
+
+func TestRedacted_LeavesReceiverIntact(t *testing.T) {
+	cfg := Defaults()
+	cfg.State.URL = "libsql://db-org.turso.io/v2?authToken=real-token"
+	cfg.State.AuthToken = "real-token"
+
+	red := cfg.Redacted()
+	if red.State.AuthToken != "<redacted>" {
+		t.Errorf("redacted token = %q", red.State.AuthToken)
+	}
+	if red.State.URL != "libsql://db-org.turso.io" {
+		t.Errorf("redacted url = %q", red.State.URL)
+	}
+	if cfg.State.AuthToken != "real-token" || !strings.Contains(cfg.State.URL, "authToken=") {
+		t.Fatalf("Redacted mutated its receiver: %q / %q", cfg.State.AuthToken, cfg.State.URL)
+	}
+}
+
+func TestRedacted_PaddedURLStillScrubbed(t *testing.T) {
+	cfg := Defaults()
+	cfg.State.URL = "  libsql://db-org.turso.io/v2?authToken=real-token\n"
+	if got := cfg.Redacted().State.URL; got != "libsql://db-org.turso.io" {
+		t.Errorf("padded url = %q, want it scrubbed", got)
+	}
+}
+
+func TestRedacted_EmptyTokenStaysAbsent(t *testing.T) {
+	cfg := Defaults()
+	b, err := cfg.Redacted().EncodeTOML()
+	if err != nil {
+		t.Fatalf("EncodeTOML: %v", err)
+	}
+	if strings.Contains(string(b), "auth_token") {
+		t.Errorf("auth_token key should be omitted when unset:\n%s", b)
+	}
+}
