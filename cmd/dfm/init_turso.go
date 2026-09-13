@@ -113,6 +113,22 @@ func extractTursoToken(stdout string) string {
 	return ""
 }
 
+// saveConfigKeepingFileToken writes cfg to cfgPath after replacing
+// State.AuthToken with whatever the file already stores. Load overlays
+// TURSO_AUTH_TOKEN from the environment, so a Config in hand can carry
+// a token the file never held.
+func saveConfigKeepingFileToken(cfg *config.Config, cfgPath string) error {
+	tok, err := config.SavedAuthToken(cfgPath)
+	if err != nil {
+		return err
+	}
+	cfg.State.AuthToken = tok
+	if err := config.Save(cfgPath, cfg); err != nil {
+		return fmt.Errorf("save config %s: %w", cfgPath, err)
+	}
+	return nil
+}
+
 // tursoEnvFilePath returns ~/.local/share/dotfiles/.env (or the
 // XDG_DATA_HOME equivalent), matching where state.db and backups live.
 func tursoEnvFilePath() (string, error) {
@@ -191,10 +207,14 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
 		return fmt.Errorf("empty token from turso db tokens create")
 	}
 
-	// 7. Write URL to config.
+	// 7. Write URL to config. Load overlays TURSO_AUTH_TOKEN from the
+	// environment, so saving the struct as-is would persist an env-only
+	// token in cleartext. Restore whatever the file itself already
+	// stores — blanking unconditionally would delete a token the file
+	// legitimately owns (omitempty).
 	cfg.State.URL = dbURL
-	if err := config.Save(cfgPath, cfg); err != nil {
-		return fmt.Errorf("save config %s: %w", cfgPath, err)
+	if err := saveConfigKeepingFileToken(cfg, cfgPath); err != nil {
+		return err
 	}
 
 	// 8. Write token to ~/.local/share/dotfiles/.env.
@@ -247,4 +267,3 @@ in your environment. dfm reads $TURSO_AUTH_TOKEN at runtime.
 	})
 	return nil
 }
-

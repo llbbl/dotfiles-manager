@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/config"
 )
 
 func TestLibsqlURLHost(t *testing.T) {
@@ -133,5 +135,69 @@ func TestWriteTursoEnvFile_CreatesParentDir(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("file missing: %v", err)
+	}
+}
+
+// config.Load overlays TURSO_AUTH_TOKEN, so saving the struct back could
+// persist an env-only token. Blanking it unconditionally is equally
+// wrong: omitempty would then delete a token the file legitimately owns.
+func TestSaveConfigKeepingFileToken(t *testing.T) {
+	for _, tc := range []struct {
+		name, fileToken, envToken, want string
+	}{
+		{"env only", "", "env-secret", ""},
+		{"file only", "file-secret", "", "file-secret"},
+		{"both", "file-secret", "env-secret", "file-secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.toml")
+
+			seed := config.Defaults()
+			seed.State.URL = "file://" + filepath.Join(dir, "state.db")
+			if tc.fileToken != "" {
+				seed.State.AuthToken = tc.fileToken
+			}
+			if err := config.Save(cfgPath, seed); err != nil {
+				t.Fatalf("seed config: %v", err)
+			}
+
+			t.Setenv("TURSO_AUTH_TOKEN", tc.envToken)
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if tc.envToken != "" && cfg.State.AuthToken != tc.envToken {
+				t.Fatalf("Load did not overlay env token: got %q", cfg.State.AuthToken)
+			}
+
+			cfg.State.URL = "libsql://new-db.turso.io"
+			if err := saveConfigKeepingFileToken(cfg, cfgPath); err != nil {
+				t.Fatalf("saveConfigKeepingFileToken: %v", err)
+			}
+
+			got, err := config.SavedAuthToken(cfgPath)
+			if err != nil {
+				t.Fatalf("SavedAuthToken: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("auth_token in config.toml = %q, want %q", got, tc.want)
+			}
+
+			raw, err := os.ReadFile(cfgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(raw)
+			if !strings.Contains(body, "libsql://new-db.turso.io") {
+				t.Errorf("URL not persisted: %s", body)
+			}
+			if tc.envToken != "" && strings.Contains(body, tc.envToken) {
+				t.Errorf("env-only token leaked into config.toml: %s", body)
+			}
+			if tc.want == "" && strings.Contains(body, "auth_token") {
+				t.Errorf("absent token should stay omitted, got: %s", body)
+			}
+		})
 	}
 }
