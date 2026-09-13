@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.11.0] - 2026-09-13
+
+### Features
+
+- Render managed PATH entries as a standalone shell fragment
 ## [1.10.2] - 2026-09-13
 
 ### Bug Fixes
