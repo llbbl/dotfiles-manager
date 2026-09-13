@@ -204,3 +204,77 @@ func TestValidate_RejectsUnknownProvider(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// An existing config.toml predates the [path] section, so its absence
+// has to leave the switch off rather than needing a config migration.
+func TestLoad_AbsentPathSectionLeavesUseFragmentOff(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[log]\nbackend = \"jsonl\"\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Path.UseFragment {
+		t.Error("path.use_fragment defaulted to true")
+	}
+
+	cfg.Path.UseFragment = true
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !back.Path.UseFragment {
+		t.Error("path.use_fragment did not round-trip")
+	}
+}
+
+func TestSavedAuthToken(t *testing.T) {
+	dir := t.TempDir()
+
+	if got, err := SavedAuthToken(""); err != nil || got != "" {
+		t.Errorf("empty path = (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	missing := filepath.Join(dir, "absent.toml")
+	if got, err := SavedAuthToken(missing); err != nil || got != "" {
+		t.Errorf("missing file = (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	path := filepath.Join(dir, "config.toml")
+	cfg := Defaults()
+	cfg.State.AuthToken = "file-secret"
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// The env overlay is exactly what this helper exists to see past.
+	t.Setenv("TURSO_AUTH_TOKEN", "env-secret")
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.State.AuthToken != "env-secret" {
+		t.Fatalf("Load did not overlay the env token; got %q", loaded.State.AuthToken)
+	}
+	got, err := SavedAuthToken(path)
+	if err != nil {
+		t.Fatalf("SavedAuthToken: %v", err)
+	}
+	if got != "file-secret" {
+		t.Errorf("SavedAuthToken = %q, want the file's own token", got)
+	}
+
+	if err := os.WriteFile(path, []byte("this is not toml = = ="), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := SavedAuthToken(path); err == nil {
+		t.Error("malformed config did not error")
+	}
+}

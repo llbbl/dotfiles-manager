@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,10 +14,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
+	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
@@ -310,7 +313,7 @@ func newPathCmd() *cobra.Command {
 		Short: "Manage PATH entries in tracked rc files (coalesced, idempotent)",
 	}
 	cmd.AddCommand(newPathAddCmd(), newPathRemoveCmd(), newPathListCmd(), newPathImportCmd(),
-		newPathFragmentCmd(), newPathHookCmd())
+		newPathFragmentCmd(), newPathHookCmd(), newPathMigrateCmd())
 	return cmd
 }
 
@@ -454,14 +457,79 @@ func pathShellFamily(shell string) string {
 	}
 }
 
+// pathUseFragment reports whether `dfm path migrate` has moved the
+// managed entries into the generated fragment. A context with no config
+// attached answers false, which is the pre-migrate behaviour.
+func pathUseFragment(ctx context.Context) bool {
+	cfg := config.FromContext(ctx)
+	return cfg != nil && cfg.Path.UseFragment
+}
+
 // resolvePathTarget is resolveAliasTarget's sibling for the path
 // commands: identical file resolution, three-way family instead of two.
-func resolvePathTarget(shellFlag, fileFlag string) (string, string, error) {
+// It is also the only place the use_fragment switch is read, so every
+// path subcommand follows a migration without a flag of its own. An
+// explicit --file or --shell names a file and always wins.
+func resolvePathTarget(ctx context.Context, shellFlag, fileFlag string) (string, string, error) {
+	if shellFlag == "" && fileFlag == "" && pathUseFragment(ctx) {
+		frag := config.FragmentPath(pathFragmentName(pathShellFamily(detectShell())))
+		return frag, pathShellFamily(shellFromFilename(frag)), nil
+	}
 	target, shell, err := resolveShellTarget(shellFlag, fileFlag)
 	if err != nil {
 		return "", "", err
 	}
 	return target, pathShellFamily(shell), nil
+}
+
+// writeTrackedEdit tracks path if it is not tracked yet, snapshots it,
+// writes content, and records the hash change. The file must already
+// exist. cmdName only shapes the refusal message, so it names the
+// command the user is actually holding rather than dfm track.
+func writeTrackedEdit(c *cobra.Command, s *store.Store, cmdName, path string, content []byte,
+	action string, meta map[string]any, force bool) (tracker.File, error) {
+	ctx := c.Context()
+	file, canonical, err := resolveTracked(ctx, s, path)
+	if err != nil {
+		code, terr := runTrackOne(c, path, trackOneOptions{Force: force})
+		if terr != nil {
+			return tracker.File{}, terr
+		}
+		if code != 0 {
+			return tracker.File{}, exitf(code,
+				"%s: could not track %s. Re-run with --force to proceed anyway", cmdName, path)
+		}
+		if file, canonical, err = resolveTracked(ctx, s, path); err != nil {
+			return tracker.File{}, err
+		}
+	}
+
+	mgr, err := newSnapshotManager(ctx, s)
+	if err != nil {
+		return tracker.File{}, fmt.Errorf("snapshot manager: %w", err)
+	}
+	snap, err := snapshot.TakePreEdit(ctx, mgr, canonical, file)
+	if err != nil {
+		return tracker.File{}, err
+	}
+
+	mode := os.FileMode(0o644)
+	if info, serr := os.Stat(canonical); serr == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := fsx.AtomicWrite(canonical, content, mode); err != nil {
+		return tracker.File{}, fmt.Errorf("write %s: %w", canonical, err)
+	}
+
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["snapshot_id"] = snap.ID
+	sum := sha256.Sum256(content)
+	if err := tracker.RecordHashChange(ctx, s, file, hex.EncodeToString(sum[:]), snap.ID, action, meta); err != nil {
+		return tracker.File{}, err
+	}
+	return file, nil
 }
 
 func newPathAddCmd() *cobra.Command {
@@ -487,7 +555,7 @@ func newPathAddCmd() *cobra.Command {
 					"path add: --shell and --file are mutually exclusive")
 			}
 
-			target, family, err := resolvePathTarget(shellFlag, fileFlag)
+			target, family, err := resolvePathTarget(c.Context(), shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}
@@ -537,9 +605,9 @@ func newPathAddCmd() *cobra.Command {
 			}
 
 			var (
-				existing       *PathManagedEntry
-				existingDirs   []string
-				markerIDOld    string
+				existing     *PathManagedEntry
+				existingDirs []string
+				markerIDOld  string
 			)
 			if len(matching) == 1 {
 				existing = &matching[0]
@@ -647,12 +715,12 @@ func newPathAddCmd() *cobra.Command {
 			// recording it lets audit consumers reconstruct the
 			// transition without re-reading the rc file.
 			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.add", map[string]any{
-				"dir":             dir,
-				"direction":       direction,
-				"marker_id_new":   newID,
-				"marker_id_old":   markerIDOld,
-				"snapshot_id":     snap.ID,
-				"sub_action":      subAction,
+				"dir":           dir,
+				"direction":     direction,
+				"marker_id_new": newID,
+				"marker_id_old": markerIDOld,
+				"snapshot_id":   snap.ID,
+				"sub_action":    subAction,
 			}); err != nil {
 				return err
 			}
@@ -688,7 +756,7 @@ func newPathRemoveCmd() *cobra.Command {
 					"path remove: --shell and --file are mutually exclusive")
 			}
 
-			target, family, err := resolvePathTarget(shellFlag, fileFlag)
+			target, family, err := resolvePathTarget(c.Context(), shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}
@@ -869,7 +937,7 @@ func newPathListCmd() *cobra.Command {
 					"path list: --shell and --file are mutually exclusive")
 			}
 
-			target, _, err := resolvePathTarget(shellFlag, fileFlag)
+			target, _, err := resolvePathTarget(c.Context(), shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}

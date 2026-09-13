@@ -181,8 +181,44 @@ bash reads only that one; fish gets `config.fish`.
 
 Each target rc file is auto-tracked if it isn't already and edited through the normal
 snapshot path, so the user's tracked set grows — the output names what was tracked.
-Install is idempotent and remove restores the file's original bytes. The fragment is
-generated output: never tracked, never snapshotted, regenerable at any time.
+Install is idempotent and remove restores the file's original bytes. Until the user runs
+`dfm path migrate`, the fragment is generated output: never tracked, never snapshotted,
+regenerable at any time. After a migrate it is tracked and install stops regenerating it.
+
+### Move the managed entries into the fragment
+
+```sh
+dfm path migrate --dry-run    # every step, writes nothing — read this first
+dfm path migrate              # prompt, then move
+dfm path migrate --yes        # move without prompting
+```
+
+Opt-in. It writes the fragment, installs the hooks, tracks the fragment, sets
+`use_fragment = true` under `[path]` in `config.toml`, and only then strips the managed
+blocks from the rc file through the normal snapshot path. The flag must land before the
+strip: it is what stops `hook install` regenerating the fragment, so the other order
+leaves a window where the blocks are gone from the rc file and dfm still thinks it can
+rebuild from it. Failing before the strip just leaves the blocks in both places, which
+is the pre-migrate state.
+
+**After migrating, a bare `dfm path add` / `remove` / `list` / `fragment` targets the
+fragment, not the rc file.** There is no per-command flag to remember. `--file <path>`
+and `--shell` still win and still name a file. A user who never migrates sees exactly
+the pre-migrate behaviour.
+
+The fragment becoming tracked reverses what hook install says about it, and is
+deliberate: post-migration it holds the user's configuration rather than a regenerable
+copy of the rc file. That is also why `hook install` no longer regenerates it — doing so
+from an rc file that no longer has the blocks would overwrite the user's PATH
+configuration with an empty file.
+
+Re-running `migrate` is a no-op that says so. To undo, in this order: `dfm path hook
+remove`, then `dfm path add --file <rc>` or restore the pre-migrate snapshot, and only
+then set `use_fragment = false`. Clearing the flag before the blocks are back and
+running `hook install` overwrites the fragment from an empty rc file.
+
+Migrated zsh blocks use the POSIX body, not `path=(...)`, because `env.sh` is shared
+with sh and bash. Same dirs, same order, different text in the file.
 
 Tracking runs the same secret scan as `dfm track`, so an rc file with something like
 `export ACME_API_KEY=...` stops the install; `--force` tracks and installs anyway. An

@@ -127,6 +127,30 @@ migrate-new NAME:
     echo "created $FILE"
 
 # ============================================================================
+# PATH fragment (runs against your real dotfiles)
+# ============================================================================
+
+# Print the generated PATH fragment for your shell
+path-fragment *ARGS:
+    go run {{ PKG }} path fragment {{ ARGS }}
+
+# Write the fragment and install the rc hooks that source it
+path-hook-install *ARGS:
+    go run {{ PKG }} path hook install {{ ARGS }}
+
+# Strip the rc hooks again
+path-hook-remove *ARGS:
+    go run {{ PKG }} path hook remove {{ ARGS }}
+
+# Preview moving your managed PATH entries into the fragment
+path-migrate *ARGS:
+    go run {{ PKG }} path migrate --dry-run {{ ARGS }}
+
+# Actually move them: edits rc files and flips path.use_fragment
+path-migrate-write *ARGS:
+    go run {{ PKG }} path migrate --yes {{ ARGS }}
+
+# ============================================================================
 # Version Management
 # ============================================================================
 

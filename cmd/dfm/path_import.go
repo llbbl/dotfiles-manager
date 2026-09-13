@@ -655,7 +655,7 @@ func newPathImportCmd() *cobra.Command {
 					"path import: fish import not yet supported")
 			}
 
-			target, family, err := resolvePathTarget(shellFlag, fileFlag)
+			target, family, err := resolvePathTarget(c.Context(), shellFlag, fileFlag)
 			if err != nil {
 				return err
 			}
