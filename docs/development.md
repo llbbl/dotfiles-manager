@@ -113,7 +113,7 @@ Use the project's [GitHub issues](https://github.com/llbbl/dotfiles-manager/issu
 | `fix:` / `perf:` / `refactor:` / `chore:` (incl. `!:`) | patch (`1.0.x`) |
 | `docs:` / `ci:` / `test:` / `style:` | none |
 
-Note: `chore(release):` head commits are skipped at the workflow's top-level `if:` guard, so the auto-CHANGELOG bot doesn't loop on itself.
+Note: `chore(release):` commits never influence a release. They are skipped at the workflow's top-level `if:` guard when they are the head commit, and filtered out of the commit range that decides the bump. Both are needed: the tag is created before the changelog commit exists, so the previous release's own commit always falls inside the next range and would otherwise match `^chore` and cut a patch on any push.
 
 **Major version bumps are intentionally NOT triggered by `feat!:` or `BREAKING CHANGE:` footers.** While the project is in rapid-iteration mode, accidentally releasing 2.0 has higher cost than the upside of automatic major bumps. A `feat!:` commit ships as a minor bump; the breaking change should be called out in the PR body and release notes.
 
