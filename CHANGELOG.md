@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.10.1] - 2026-09-13
+
+### Miscellaneous
+
+- Run checks on pull requests targeting any branch (#78)
 ## [1.10.0] - 2026-09-12
 
 ### Features
