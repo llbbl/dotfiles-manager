@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.2] - 2026-09-13
+
+### Bug Fixes
+
+- Keep Turso auth tokens out of config.toml on every write path (#86)
 ## [1.13.1] - 2026-09-13
 
 ### Bug Fixes
