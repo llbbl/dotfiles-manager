@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.10.2] - 2026-09-13
+
+### Bug Fixes
+
+- Promote a directory already on PATH in the POSIX path block
 ## [1.10.1] - 2026-09-13
 
 ### Miscellaneous
