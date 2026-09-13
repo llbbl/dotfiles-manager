@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.12.0] - 2026-09-13
+
+### Features
+
+- Install rc hooks that source the generated PATH fragment (#81)
+
+### Miscellaneous
+
+- Stop the changelog commit from triggering the next release (#80)
 ## [1.11.0] - 2026-09-13
 
 ### Features
