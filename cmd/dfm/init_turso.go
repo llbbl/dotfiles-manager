@@ -7,13 +7,12 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/llbbl/dotfiles-manager/internal/audit"
 	"github.com/llbbl/dotfiles-manager/internal/config"
-	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/envfile"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 )
 
@@ -57,46 +56,9 @@ func libsqlURLHost(raw string) string {
 }
 
 // writeTursoEnvFile writes TURSO_AUTH_TOKEN=<token> to path with mode
-// 0600. If the file already exists, any existing TURSO_AUTH_TOKEN= line
-// is replaced in place; other lines are preserved. If no such line is
-// present, one is appended.
+// 0600, preserving every other line.
 func writeTursoEnvFile(path, token string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-
-	var existing []string
-	if data, err := os.ReadFile(path); err == nil {
-		// Preserve original line content (sans trailing newline) so we
-		// don't munge whitespace the user may have added.
-		existing = append(existing, strings.Split(string(data), "\n")...)
-		// strings.Split adds a trailing empty element when the file
-		// ends in "\n"; drop it so we don't accumulate blank lines.
-		if n := len(existing); n > 0 && existing[n-1] == "" {
-			existing = existing[:n-1]
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-
-	newLine := "TURSO_AUTH_TOKEN=" + token
-	replaced := false
-	for i, line := range existing {
-		if strings.HasPrefix(strings.TrimSpace(line), "TURSO_AUTH_TOKEN=") {
-			existing[i] = newLine
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		existing = append(existing, newLine)
-	}
-
-	out := strings.Join(existing, "\n") + "\n"
-	// The canonical helper applies mode to the temp file before rename,
-	// so the on-disk file is 0600 from first appearance.
-	return fsx.AtomicWrite(path, []byte(out), 0o600)
+	return envfile.SetKey(path, "TURSO_AUTH_TOKEN", token)
 }
 
 // extractTursoToken takes the stdout of `turso db tokens create` and
@@ -111,36 +73,6 @@ func extractTursoToken(stdout string) string {
 		}
 	}
 	return ""
-}
-
-// saveConfigKeepingFileToken writes cfg to cfgPath after replacing
-// State.AuthToken with whatever the file already stores. Load overlays
-// TURSO_AUTH_TOKEN from the environment, so a Config in hand can carry
-// a token the file never held.
-func saveConfigKeepingFileToken(cfg *config.Config, cfgPath string) error {
-	tok, err := config.SavedAuthToken(cfgPath)
-	if err != nil {
-		return err
-	}
-	cfg.State.AuthToken = tok
-	if err := config.Save(cfgPath, cfg); err != nil {
-		return fmt.Errorf("save config %s: %w", cfgPath, err)
-	}
-	return nil
-}
-
-// tursoEnvFilePath returns ~/.local/share/dotfiles/.env (or the
-// XDG_DATA_HOME equivalent), matching where state.db and backups live.
-func tursoEnvFilePath() (string, error) {
-	data := os.Getenv("XDG_DATA_HOME")
-	if data == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		data = filepath.Join(home, ".local", "share")
-	}
-	return filepath.Join(data, "dotfiles", ".env"), nil
 }
 
 // runTursoInit performs the full Turso setup flow as described in
@@ -207,21 +139,19 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
 		return fmt.Errorf("empty token from turso db tokens create")
 	}
 
-	// 7. Write URL to config. Load overlays TURSO_AUTH_TOKEN from the
-	// environment, so saving the struct as-is would persist an env-only
-	// token in cleartext. Restore whatever the file itself already
-	// stores — blanking unconditionally would delete a token the file
-	// legitimately owns (omitempty).
+	// 7. Write URL to config. The shared guard keeps state.auth_token
+	// out of the file entirely, moving one the file already owned into
+	// the env file rather than dropping it.
 	cfg.State.URL = dbURL
-	if err := saveConfigKeepingFileToken(cfg, cfgPath); err != nil {
+	migrated, envPath, err := config.SaveKeepingFileToken(cfgPath, cfg)
+	if err != nil {
 		return err
 	}
-
-	// 8. Write token to ~/.local/share/dotfiles/.env.
-	envPath, err := tursoEnvFilePath()
-	if err != nil {
-		return fmt.Errorf("resolve env path: %w", err)
+	if migrated {
+		fmt.Print(config.TokenMigrationNotice(envPath))
 	}
+
+	// 8. Write the freshly-minted token to ~/.local/share/dotfiles/.env.
 	if err := writeTursoEnvFile(envPath, token); err != nil {
 		return err
 	}

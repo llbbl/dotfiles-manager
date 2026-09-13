@@ -88,16 +88,17 @@ func chapterAI(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config
 }
 
 // chapterState walks the user through picking a state store. Returns
-// (provisionTurso, dbName, err). When provisionTurso is true the cobra
-// layer should invoke the existing runTursoInit helper to actually
-// create the DB; the wizard only collected the choice.
+// (provisionTurso, dbName, bakedToken, err). When provisionTurso is true
+// the cobra layer should invoke the existing runTursoInit helper to
+// actually create the DB; the wizard only collected the choice.
 //
 // "Bake from env" path: when the user picks Turso AND
 // TURSO_DATABASE_URL/TURSO_AUTH_TOKEN are already in the process env
-// (or supplied via --turso-url / --turso-auth-token), the wizard
-// writes those values directly into the config and returns
-// provisionTurso=false. No CLI shell-out is required.
-func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config, editMode bool) (bool, string, error) {
+// (or supplied via --turso-url / --turso-auth-token), the URL goes into
+// the config and provisionTurso is false. bakedToken is non-empty only
+// when the user supplied a token outright; the caller writes it to the
+// env file, never to config.toml.
+func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config, editMode bool) (bool, string, string, error) {
 	// Resolve the branch (local vs turso) up front.
 	branch := strings.ToLower(opts.State)
 	if branch == "" && opts.Turso {
@@ -123,7 +124,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 			},
 		})
 		if err != nil {
-			return false, "", err
+			return false, "", "", err
 		}
 		switch strings.ToLower(strings.TrimSpace(ans)) {
 		case "b", "turso":
@@ -144,7 +145,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 			cfg.State.URL = d.State.URL
 		}
 		cfg.State.AuthToken = ""
-		return false, "", nil
+		return false, "", "", nil
 	}
 
 	// Turso branch.
@@ -166,27 +167,27 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	// AND user said --yes (or --turso non-interactively), bake.
 	if opts.Yes || opts.Turso || opts.TursoURL != "" || opts.TursoAuthToken != "" {
 		if url != "" && token != "" {
-			fmt.Fprintln(out, "  Warning: TURSO_AUTH_TOKEN will be written to the config file in plain text.")
+			fmt.Fprintln(out, "  Note: the auth token goes to the env file, not config.toml.")
 			cfg.State.URL = url
 			cfg.State.AuthToken = token
-			return false, dbName, nil
+			return false, dbName, token, nil
 		}
 		// No env/flag values to bake — defer to the CLI provisioning
 		// flow (will shell out to `turso`).
-		return true, dbName, nil
+		return true, dbName, "", nil
 	}
 
 	// Interactive: offer to bake env values if present.
 	if url != "" && token != "" {
 		ok, err := AskYesNo(in, out, fmt.Sprintf("Use TURSO_DATABASE_URL/AUTH_TOKEN from your environment (%s)?", url), true)
 		if err != nil {
-			return false, "", err
+			return false, "", "", err
 		}
 		if ok {
-			fmt.Fprintln(out, "  Warning: TURSO_AUTH_TOKEN will be written to the config file in plain text.")
+			fmt.Fprintln(out, "  Note: the auth token goes to the env file, not config.toml.")
 			cfg.State.URL = url
 			cfg.State.AuthToken = token
-			return false, dbName, nil
+			return false, dbName, token, nil
 		}
 	}
 
@@ -202,7 +203,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 		},
 	})
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	tokAns, err := AskLine(in, out, PromptOpts{
 		Question: "Turso auth token",
@@ -216,12 +217,12 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 		},
 	})
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
-	fmt.Fprintln(out, "  Warning: TURSO_AUTH_TOKEN will be written to the config file in plain text.")
+	fmt.Fprintln(out, "  Note: the auth token goes to the env file, not config.toml.")
 	cfg.State.URL = urlAns
 	cfg.State.AuthToken = tokAns
-	return false, dbName, nil
+	return false, dbName, tokAns, nil
 }
 
 // chapterRepo collects the backup-repo settings. It does NOT clone or

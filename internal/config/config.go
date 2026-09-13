@@ -14,6 +14,9 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/llbbl/dotfiles-manager/internal/envfile"
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
 )
 
 // Config is the fully-resolved TOML configuration used throughout the
@@ -261,28 +264,68 @@ func LoadRuntimeOnly(path string) (RuntimeConfig, error) {
 }
 
 // Save writes cfg as TOML to path, creating parent directories as
-// needed.
+// needed. The file is always 0600: it has historically carried
+// state.auth_token, and an explicit mode narrows an existing
+// world-readable file instead of preserving its bits.
 func Save(path string, cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	f, err := os.Create(path)
+	data, err := cfg.EncodeTOML()
 	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	enc := toml.NewEncoder(f)
-	if err := enc.Encode(cfg); err != nil {
-		_ = f.Close()
 		return fmt.Errorf("encode: %w", err)
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("sync %s: %w", path, err)
+	return fsx.AtomicWrite(path, data, 0o600)
+}
+
+// EnvFilePath returns $XDG_DATA_HOME/dotfiles/.env — the 0600 file that
+// holds credentials, alongside state.db and the backups.
+func EnvFilePath() string {
+	return filepath.Join(xdgDataHome(), "dotfiles", ".env")
+}
+
+// TokenMigrationNotice is the message a caller prints after
+// SaveKeepingFileToken reports a migration. It has to name the shell
+// step: nothing in dfm reads the env file, so a token that worked from
+// config.toml stops working until the user's shell exports it.
+func TokenMigrationNotice(envPath string) string {
+	return fmt.Sprintf(`→ moved state.auth_token from config.toml
+  to %s (0600)
+  config.toml no longer holds a credential
+
+  Next step: ensure your shell loads %s, or export TURSO_AUTH_TOKEN
+  in your environment. dfm reads $TURSO_AUTH_TOKEN at runtime, not this
+  file — until you do, remote state will not authenticate.
+`, envPath, envPath)
+}
+
+// SaveKeepingFileToken writes cfg to path with state.auth_token always
+// omitted, and is the only way a token-bearing Config should reach disk.
+// Load overlays TURSO_AUTH_TOKEN from the environment, so the struct in
+// hand routinely carries a token the file never held.
+//
+// A token the file itself owns is not dropped — it is moved to the env
+// file and migrated=true is returned so the caller can say so. The env
+// file is written first: a failure between the two writes must not
+// destroy the only copy of the credential.
+func SaveKeepingFileToken(path string, cfg *Config) (migrated bool, envPath string, err error) {
+	fileToken, err := SavedAuthToken(path)
+	if err != nil {
+		return false, "", err
 	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
+	envPath = EnvFilePath()
+	if fileToken != "" {
+		if err := envfile.SetKey(envPath, "TURSO_AUTH_TOKEN", fileToken); err != nil {
+			return false, envPath, err
+		}
 	}
-	return nil
+
+	saved := *cfg
+	saved.State.AuthToken = ""
+	if err := Save(path, &saved); err != nil {
+		return false, envPath, fmt.Errorf("save config %s: %w", path, err)
+	}
+	return fileToken != "", envPath, nil
 }
 
 // Validate reports an error if cfg.AI.Provider or cfg.Log.Backend is

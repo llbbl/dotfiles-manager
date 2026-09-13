@@ -166,16 +166,12 @@ func runPathMigrate(c *cobra.Command, shellFlag string, dryRun, yes, force bool)
 	}
 	cfg.Path.UseFragment = true
 	saved := *cfg
-	// config.Load overlays TURSO_AUTH_TOKEN from the environment, so the
-	// struct in hand may hold a token the file never had. Write back
-	// whatever the file itself carries.
-	fileToken, terr := config.SavedAuthToken(cfgPath)
-	if terr != nil {
-		return terr
+	migrated, envPath, serr := config.SaveKeepingFileToken(cfgPath, &saved)
+	if serr != nil {
+		return serr
 	}
-	saved.State.AuthToken = fileToken
-	if err := config.Save(cfgPath, &saved); err != nil {
-		return fmt.Errorf("save config %s: %w", cfgPath, err)
+	if migrated {
+		fmt.Fprint(out, config.TokenMigrationNotice(envPath))
 	}
 	fmt.Fprintf(out, "set path.use_fragment = true in %s\n", cfgPath)
 

@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
-	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/envfile"
 )
 
 // Options bundles the non-interactive overrides + the I/O streams the
@@ -61,7 +61,7 @@ type Options struct {
 // Plan is what Run returns: the chosen config plus any side-effect
 // intents the cobra layer must execute (provision a Turso DB, init the
 // backup repo, run `dfm track`, etc.). The wizard itself only writes
-// the config file (atomically, mode 0600) and never shells out.
+// the config file and the env file (both 0600) and never shells out.
 type Plan struct {
 	// Config is the fully-populated *config.Config the wizard wrote (or
 	// would write, in --print mode).
@@ -143,7 +143,7 @@ func Run(opts Options, existing *config.Config) (*Plan, error) {
 	}
 
 	// ---- Chapter 3: state store -----------------------------------
-	provisionTurso, dbName, err := chapterState(in, opts.Out, opts, cfg, editMode)
+	provisionTurso, dbName, bakedToken, err := chapterState(in, opts.Out, opts, cfg, editMode)
 	if err != nil {
 		return nil, err
 	}
@@ -168,11 +168,16 @@ func Run(opts Options, existing *config.Config) (*Plan, error) {
 	plan.Config = cfg
 
 	// Persist the config (or print it).
-	data, err := cfg.EncodeTOML()
-	if err != nil {
-		return nil, fmt.Errorf("encode config: %w", err)
-	}
 	if opts.Print {
+		// --print previews the file that would be written, and that file
+		// never holds auth_token. Emitting it here would both print a
+		// credential and show a preview the write path contradicts.
+		shown := *cfg
+		shown.State.AuthToken = ""
+		data, err := shown.EncodeTOML()
+		if err != nil {
+			return nil, fmt.Errorf("encode config: %w", err)
+		}
 		if _, err := opts.Out.Write(data); err != nil {
 			return nil, err
 		}
@@ -180,10 +185,24 @@ func Run(opts Options, existing *config.Config) (*Plan, error) {
 		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 			return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(cfgPath), err)
 		}
-		if err := fsx.AtomicWrite(cfgPath, data, 0o600); err != nil {
+		// cfg can carry a token Load overlaid from the environment, so
+		// it never goes to disk via EncodeTOML — only through the guard.
+		migrated, envPath, err := config.SaveKeepingFileToken(cfgPath, cfg)
+		if err != nil {
 			return nil, err
 		}
 		plan.ConfigWritten = true
+		if migrated {
+			fmt.Fprint(opts.Out, config.TokenMigrationNotice(envPath))
+		}
+		// A token the user supplied outright lands in the env file,
+		// after the guard so it wins over any older migrated value.
+		if bakedToken != "" {
+			if err := envfile.SetKey(envPath, "TURSO_AUTH_TOKEN", bakedToken); err != nil {
+				return nil, err
+			}
+			fmt.Fprintf(opts.Out, "  auth token written to %s (0600)\n", envPath)
+		}
 	}
 
 	// ---- Chapter 6: summary ---------------------------------------

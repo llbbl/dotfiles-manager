@@ -390,11 +390,12 @@ func TestPathMigrate_FlipsSwitchBeforeStripping(t *testing.T) {
 // wrong: omitempty would then delete a token the file legitimately owns.
 func TestPathMigrate_AuthTokenHandling(t *testing.T) {
 	for _, tc := range []struct {
-		name, fileToken, envToken, want string
+		name, fileToken, envToken string
+		wantInEnvFile             bool
 	}{
-		{"env only", "", "env-secret", ""},
-		{"file only", "file-secret", "", "file-secret"},
-		{"both", "file-secret", "env-secret", "file-secret"},
+		{"env only", "", "env-secret", false},
+		{"file only", "file-secret", "", true},
+		{"both", "file-secret", "env-secret", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, home := newMigrateEnv(t)
@@ -416,14 +417,35 @@ func TestPathMigrate_AuthTokenHandling(t *testing.T) {
 			}
 			t.Setenv("TURSO_AUTH_TOKEN", tc.envToken)
 
-			runPathCmd(t, ctx, "migrate", "--yes")
+			out := runPathCmd(t, ctx, "migrate", "--yes")
 
 			got, err := config.SavedAuthToken(cfgPath)
 			if err != nil {
 				t.Fatalf("SavedAuthToken: %v", err)
 			}
-			if got != tc.want {
-				t.Errorf("auth_token in config.toml = %q, want %q", got, tc.want)
+			if got != "" {
+				t.Error("config.toml still carries an auth_token")
+			}
+
+			envPath := config.EnvFilePath()
+			if !tc.wantInEnvFile {
+				if _, err := os.Stat(envPath); !os.IsNotExist(err) {
+					t.Errorf("env file created for an env-only token (err=%v)", err)
+				}
+				if strings.Contains(out, "moved state.auth_token") {
+					t.Error("migration notice printed with nothing to migrate")
+				}
+				return
+			}
+			env, err := os.ReadFile(envPath)
+			if err != nil {
+				t.Fatalf("env file: %v", err)
+			}
+			if !strings.Contains(string(env), "TURSO_AUTH_TOKEN="+tc.fileToken) {
+				t.Error("file token not migrated to the env file")
+			}
+			if n := strings.Count(out, "moved state.auth_token"); n != 1 {
+				t.Errorf("migration notice printed %d times, want 1", n)
 			}
 		})
 	}
