@@ -53,7 +53,7 @@ func TestPathAdd_Fish_FirstAddCreatesEntry(t *testing.T) {
 		}
 	}
 	// Must NOT carry bash/zsh-only fragments.
-	for _, frag := range []string{`case ":$PATH:" in`, "unset __dfm_d", "export PATH\n"} {
+	for _, frag := range []string{"__dfm_new", "unset __dfm_d", "export PATH\n"} {
 		if bytes.Contains(got, []byte(frag)) {
 			t.Errorf("unexpected bash/zsh fragment %q in fish output:\n%s", frag, got)
 		}

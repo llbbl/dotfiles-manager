@@ -1,10 +1,16 @@
 # dfm:path:df918c1a >>>  updated=2026-01-02T03:04:05Z  direction=prepend  dirs=/a:/b:/c
 for __dfm_d in /a /b /c; do
-  case ":$PATH:" in
-    *":$__dfm_d:"*) ;;
-    *) PATH="$__dfm_d:$PATH" ;;
-  esac
+  __dfm_rest=$PATH; __dfm_new=
+  while [ -n "$__dfm_rest" ]; do
+    __dfm_p=${__dfm_rest%%:*}
+    case $__dfm_rest in
+      *:*) __dfm_rest=${__dfm_rest#*:} ;;
+      *) __dfm_rest= ;;
+    esac
+    [ "$__dfm_p" = "$__dfm_d" ] || __dfm_new=${__dfm_new:+$__dfm_new:}$__dfm_p
+  done
+  PATH="$__dfm_d${__dfm_new:+:$__dfm_new}"
 done
-unset __dfm_d
+unset __dfm_d __dfm_p __dfm_new __dfm_rest
 export PATH
 # dfm:path:df918c1a <<<

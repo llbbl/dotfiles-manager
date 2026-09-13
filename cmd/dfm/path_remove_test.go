@@ -181,8 +181,8 @@ func TestPathRemove_Fish_Shrink(t *testing.T) {
 		t.Errorf("expected fish for-loop with /a /c in:\n%s", got)
 	}
 	// Bash-shaped fragment must NOT show up.
-	if bytes.Contains(got, []byte(`case ":$PATH:" in`)) {
-		t.Errorf("unexpected bash case-guard in fish output:\n%s", got)
+	if bytes.Contains(got, []byte("__dfm_new")) {
+		t.Errorf("unexpected posix rebuild loop in fish output:\n%s", got)
 	}
 }
 
