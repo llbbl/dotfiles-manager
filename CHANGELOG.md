@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.3] - 2026-09-13
+
+### Bug Fixes
+
+- Redact credentials in dfm config show (#87)
 ## [1.13.2] - 2026-09-13
 
 ### Bug Fixes
