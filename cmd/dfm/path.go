@@ -309,7 +309,8 @@ func newPathCmd() *cobra.Command {
 		Use:   "path",
 		Short: "Manage PATH entries in tracked rc files (coalesced, idempotent)",
 	}
-	cmd.AddCommand(newPathAddCmd(), newPathRemoveCmd(), newPathListCmd(), newPathImportCmd())
+	cmd.AddCommand(newPathAddCmd(), newPathRemoveCmd(), newPathListCmd(), newPathImportCmd(),
+		newPathFragmentCmd())
 	return cmd
 }
 
@@ -662,7 +663,7 @@ func newPathAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
-	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
+	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (mutually exclusive with --shell)")
 	cmd.Flags().BoolVar(&appendDir, "append", false, "write into the append-direction entry (default: prepend)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass secret scan (does NOT bypass dedup)")
 	return cmd
@@ -817,7 +818,7 @@ func newPathRemoveCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
-	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
+	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (mutually exclusive with --shell)")
 	return cmd
 }
 
@@ -925,7 +926,7 @@ func newPathListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&shellFlag, "shell", "", "shell to target (bash|zsh|fish|profile)")
-	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
+	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (mutually exclusive with --shell)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON instead of tab-separated rows")
 	return cmd
 }

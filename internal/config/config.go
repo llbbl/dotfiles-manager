@@ -296,3 +296,10 @@ func (c *Config) EncodeTOML() ([]byte, error) {
 	}
 	return []byte(sb.String()), nil
 }
+
+// FragmentPath returns the canonical location of a generated shell
+// fragment (e.g. "env.sh") under $XDG_CONFIG_HOME/dotfiles/, alongside
+// config.toml — one config directory per tool.
+func FragmentPath(name string) string {
+	return filepath.Join(xdgConfigHome(), "dotfiles", name)
+}
