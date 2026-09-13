@@ -11,14 +11,33 @@ import (
 )
 
 // helper: run the wizard with the given stdin string + options and
-// return the plan, captured stdout, and any error.
+// return the plan, captured stdout, and any error. HOME and both XDG
+// roots are pinned to a temp dir so no test can reach the developer's
+// real config.toml or .env.
 func runWizard(t *testing.T, input string, opts Options, existing *config.Config) (*Plan, string, error) {
 	t.Helper()
+	pinHome(t)
 	var out bytes.Buffer
 	opts.In = strings.NewReader(input)
 	opts.Out = &out
 	plan, err := Run(opts, existing)
 	return plan, out.String(), err
+}
+
+func pinHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+}
+
+// envFilePath is where the wizard will put credentials under the pinned
+// HOME. Only valid after runWizard has pinned it.
+func envFilePath(t *testing.T) string {
+	t.Helper()
+	p := config.EnvFilePath()
+	return p
 }
 
 // TestWizard_FreshDefaults_WritesExpectedTOML locks the "fresh setup,
@@ -74,13 +93,14 @@ func TestWizard_FreshDefaults_WritesExpectedTOML(t *testing.T) {
 }
 
 // TestWizard_TursoFromEnv_BakesValues locks: env vars present + user
-// picks turso + accepts the env-bake offer => values land in config,
-// warning is printed, ProvisionTurso is false (no CLI shell-out).
+// picks turso + accepts the env-bake offer => the URL lands in config,
+// the token lands in the env file, ProvisionTurso is false (no CLI
+// shell-out).
 func TestWizard_TursoFromEnv_BakesValues(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
 	t.Setenv("TURSO_DATABASE_URL", "libsql://test-host.turso.io")
-	t.Setenv("TURSO_AUTH_TOKEN", "tok-secret-123")
+	t.Setenv("TURSO_AUTH_TOKEN", "env-secret")
 
 	// Inputs: config path \n, ai bin \n, ai model \n, state="b"\n,
 	// env-bake "y"\n, repo "" \n, track "" \n.
@@ -93,8 +113,8 @@ func TestWizard_TursoFromEnv_BakesValues(t *testing.T) {
 	if plan.ProvisionTurso {
 		t.Error("ProvisionTurso should be false when env vars are baked")
 	}
-	if !strings.Contains(out, "written to the config file in plain text") {
-		t.Errorf("missing plain-text warning. out=%q", out)
+	if !strings.Contains(out, "the auth token goes to the env file") {
+		t.Error("missing env-file notice")
 	}
 
 	got, err := config.Load(cfgPath)
@@ -107,8 +127,15 @@ func TestWizard_TursoFromEnv_BakesValues(t *testing.T) {
 	// config.Load applies the TURSO_AUTH_TOKEN env override, so we
 	// can't assert the on-disk file via Load. Inspect the raw bytes.
 	raw, _ := os.ReadFile(cfgPath)
-	if !strings.Contains(string(raw), "tok-secret-123") {
-		t.Errorf("auth_token not persisted to config: %s", raw)
+	if strings.Contains(string(raw), "env-secret") || strings.Contains(string(raw), "auth_token") {
+		t.Error("auth token leaked into config.toml")
+	}
+	env, err := os.ReadFile(envFilePath(t))
+	if err != nil {
+		t.Fatalf("env file: %v", err)
+	}
+	if !strings.Contains(string(env), "TURSO_AUTH_TOKEN=env-secret") {
+		t.Error("baked token not written to the env file")
 	}
 }
 
@@ -121,7 +148,7 @@ func TestWizard_TursoNoEnv_PromptsForBoth(t *testing.T) {
 	t.Setenv("TURSO_AUTH_TOKEN", "")
 
 	// Inputs: cfg path, ai bin, ai model, state=b, url, token, repo, track.
-	in := "\n\n\nb\nlibsql://manual.turso.io\nmytok\n\n\n"
+	in := "\n\n\nb\nlibsql://manual.turso.io\nprompt-secret\n\n\n"
 
 	_, _, err := runWizard(t, in, Options{ConfigPath: cfgPath}, nil)
 	if err != nil {
@@ -130,10 +157,66 @@ func TestWizard_TursoNoEnv_PromptsForBoth(t *testing.T) {
 	raw, _ := os.ReadFile(cfgPath)
 	got := string(raw)
 	if !strings.Contains(got, "libsql://manual.turso.io") {
-		t.Errorf("URL not persisted: %s", got)
+		t.Error("URL not persisted to config.toml")
 	}
-	if !strings.Contains(got, "mytok") {
-		t.Errorf("token not persisted: %s", got)
+	if strings.Contains(got, "prompt-secret") || strings.Contains(got, "auth_token") {
+		t.Error("prompted token leaked into config.toml")
+	}
+	env, err := os.ReadFile(envFilePath(t))
+	if err != nil {
+		t.Fatalf("env file: %v", err)
+	}
+	if !strings.Contains(string(env), "TURSO_AUTH_TOKEN=prompt-secret") {
+		t.Error("prompted token not written to the env file")
+	}
+}
+
+// Regression: TURSO_AUTH_TOKEN set, TURSO_DATABASE_URL unset, no turso
+// CLI. Load overlaid the env token onto the config the wizard cloned in
+// edit mode, so re-running init wrote a credential the file never held
+// into config.toml — before the provisioning step's guard could run.
+func TestWizard_EditMode_EnvTokenNeverReachesConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	seed := config.Defaults()
+	seed.State.URL = "libsql://existing.turso.io"
+	if err := config.Save(cfgPath, seed); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("TURSO_DATABASE_URL", "")
+	t.Setenv("TURSO_AUTH_TOKEN", "env-secret")
+
+	existing, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if existing.State.AuthToken != "env-secret" {
+		t.Fatalf("setup: Load did not overlay the env token")
+	}
+
+	plan, _, err := runWizard(t, strings.Repeat("\n", 8), Options{ConfigPath: cfgPath, Turso: true}, existing)
+	if err != nil {
+		t.Fatalf("wizard.Run: %v", err)
+	}
+	if !plan.ProvisionTurso {
+		t.Error("expected the CLI provisioning branch with no URL in the env")
+	}
+
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "env-secret") {
+		t.Error("env-only token written to config.toml")
+	}
+	if strings.Contains(body, "auth_token") {
+		t.Error("config.toml carries an auth_token key")
+	}
+	if tok, err := config.SavedAuthToken(cfgPath); err != nil || tok != "" {
+		t.Errorf("SavedAuthToken = %v (err=%v), want empty", tok != "", err)
 	}
 }
 
@@ -243,5 +326,25 @@ func TestWizard_ForceOnExistingConfig(t *testing.T) {
 	}
 	if got.AI.ClaudeCode.Model != "sonnet" {
 		t.Errorf("--force should reset to defaults, got model=%q", got.AI.ClaudeCode.Model)
+	}
+}
+
+// --print previews the file that would be written, and that file never
+// holds auth_token. Emitting it would print a credential and show a
+// preview the write path contradicts.
+func TestWizard_Print_OmitsAuthToken(t *testing.T) {
+	t.Setenv("TURSO_DATABASE_URL", "libsql://fake.turso.io")
+	t.Setenv("TURSO_AUTH_TOKEN", "env-secret")
+
+	_, out, err := runWizard(t, "", Options{Yes: true, Turso: true, Print: true}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if strings.Contains(out, "env-secret") {
+		t.Error("--print emitted the auth token")
+	}
+	if strings.Contains(out, "auth_token") {
+		t.Errorf("--print rendered an auth_token key:\n%s", out)
 	}
 }

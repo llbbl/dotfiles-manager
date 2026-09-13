@@ -19,6 +19,7 @@ func newHookEnv(t *testing.T) (context.Context, string) {
 	home := t.TempDir()
 	env := newTestEnv(t, WithHome(home))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	return config.WithContext(env.Ctx, env.Cfg), home
 }
 

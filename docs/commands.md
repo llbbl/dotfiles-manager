@@ -320,7 +320,7 @@ The steps run in this order, so no interruption can leave your entries with only
 1. Render the fragment from the rc file's managed blocks and write it to `$XDG_CONFIG_HOME/dotfiles/`.
 2. Install the `dfm:env` hooks, exactly as `dfm path hook install` does.
 3. Track the fragment.
-4. Set `use_fragment = true` under `[path]` in `config.toml`.
+4. Set `use_fragment = true` under `[path]` in `config.toml`. If the file still held `[state].auth_token`, it moves to `$XDG_DATA_HOME/dotfiles/.env` (mode 0600) and the move is reported.
 5. Strip the managed blocks from the rc file, through the normal snapshot path.
 
 The last two are in that order on purpose. The flag is what tells `hook install` to stop regenerating the fragment, so stripping first would open a window — a failed config write, or a Ctrl-C — where the blocks are gone from the rc file while dfm still believes it can rebuild the fragment from it. Failing the other way round is harmless: the blocks are simply still in both places, which is exactly the state you were in before running migrate.
@@ -400,6 +400,13 @@ You can still add `typeset -U path PATH` near the top of `~/.zshrc` yourself if 
 
 First-run setup. Probes `[repo].remote` with `git ls-remote`:
 
+`config.toml` never holds `[state].auth_token`. Any command that rewrites it moves a token already in the file to `$XDG_DATA_HOME/dotfiles/.env` (mode 0600) and says so.
+
+A token that dfm only *reads* from `$TURSO_AUTH_TOKEN` at runtime is never written anywhere. A token you hand it outright — `--turso-auth-token`, or `$TURSO_AUTH_TOKEN` at the moment you run `dfm init --turso` — is written to that same `.env` file, because otherwise it would be discarded and the setup would not work on your next command.
+
+**dfm does not read that `.env` file for you.** It is written for your shell to source; `dfm` only ever reads `$TURSO_AUTH_TOKEN` from the process environment. So after a token is moved there, export it from your shell or remote state will stop authenticating. `[runtime].dotenv` searches `$XDG_CONFIG_HOME/dotfiles/.env` and `./.env`, which is a different path, and is off by default.
+
+
 - Remote reachable and non-empty → clone it into `[repo].local`.
 - Remote reachable but empty → with `--create-remote` (or interactive confirm), run `gh repo create --private`, push an initial commit.
 - Remote unreachable → exit 2 with the underlying git error.
@@ -415,7 +422,7 @@ Flags:
 - `--turso` — provision a Turso libSQL remote DB.
 - `--turso-db-name <name>` — DB to create or reuse (default `dotfiles-state`).
 - `--turso-url <url>` — bake in an existing `libsql://` URL and skip provisioning.
-- `--turso-auth-token <token>` — bake in an existing auth token.
+- `--turso-auth-token <token>` — use an existing auth token. When the config is written it goes to `$XDG_DATA_HOME/dotfiles/.env` (mode 0600), never to `config.toml`. Under `--print` nothing is written at all, and the rendered config omits the token.
 - `--ai-model <name>` / `--ai-bin <path>` — override the AI chapter.
 
 ### `dfm sync`
