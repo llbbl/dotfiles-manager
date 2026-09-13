@@ -138,6 +138,13 @@ directory, so re-adding one spelling of an existing entry exits 4.
 Quoting is the usual trap for alias commands: single-quote anything with shell
 metacharacters so the user's shell does not expand them at invocation time.
 
+Aliases only work at an interactive prompt. Non-interactive bash — `bash script.sh`,
+`#!/bin/bash`, `bash -c` — does not expand aliases unless the script sets
+`shopt -s expand_aliases`, and even then only for lines parsed after the definition.
+zsh does expand them in scripts, so a user who tests there will be surprised by bash.
+If the user wants it to work in a script, tell them to use a shell function or a real
+executable on `PATH`, not an alias.
+
 ### Inspect the generated PATH fragment
 
 ```sh
@@ -152,6 +159,34 @@ source POSIX syntax and one file has to serve the other three; `env.fish` covers
 Which syntax you get follows the target, so a bare `dfm path fragment` prints the fish
 fragment when `$SHELL` is fish; `--fish` forces it from any target. An rc file with no
 managed entries prints just the header.
+
+### Install the hook that sources the fragment
+
+```sh
+dfm path hook install --dry-run   # name every file that would change
+dfm path hook install             # write the fragment, install the hooks
+dfm path hook remove              # strip the hooks again
+```
+
+Install writes the fragment to `$XDG_CONFIG_HOME/dotfiles/` and adds a fixed
+`# >>> dfm:env >>>` block that sources it. The block resolves the path at shell
+startup and guards it with `[ -r ]`, so a missing fragment is a no-op, not an error.
+
+zsh gets **two** files, `~/.zshenv` and `~/.zprofile`, and both are required.
+`.zshenv` runs on every invocation, but login shells also run `/etc/zprofile`, which
+on macOS calls `path_helper` and rebuilds `PATH` — demoting anything `.zshenv` put in
+front. The `.zprofile` hook re-sources the fragment afterwards. bash gets `~/.bashrc`
+plus the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile` that exists, since login
+bash reads only that one; fish gets `config.fish`.
+
+Each target rc file is auto-tracked if it isn't already and edited through the normal
+snapshot path, so the user's tracked set grows — the output names what was tracked.
+Install is idempotent and remove restores the file's original bytes. The fragment is
+generated output: never tracked, never snapshotted, regenerable at any time.
+
+Tracking runs the same secret scan as `dfm track`, so an rc file with something like
+`export ACME_API_KEY=...` stops the install; `--force` tracks and installs anyway. An
+unrecognised `--shell` is rejected rather than falling back to `~/.profile`.
 
 ### Edit a tracked file
 
