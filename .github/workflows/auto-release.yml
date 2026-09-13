@@ -44,6 +44,12 @@ jobs:
 
           commits=$(git log "$latest_tag"..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
 
+          # The tag is created before the changelog commit exists, so the
+          # previous release's own commit always lands in this range and
+          # would match ^chore. grep -v exits 1 when it filters everything,
+          # and this step runs under bash -e.
+          commits=$(printf '%s\n' "$commits" | grep -v '^chore(release):' || true)
+
           if [ -z "$commits" ]; then
             echo "No new commits since $latest_tag; skipping release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
