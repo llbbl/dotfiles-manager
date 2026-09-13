@@ -531,6 +531,10 @@ Manage goose migrations against the configured state store (`[state].url` or `TU
 
 Print the effective config as TOML after defaults + env overrides are applied. Useful for sanity-checking which values the binary actually sees.
 
+Credentials are redacted by default: `[state].auth_token` prints as `"<redacted>"` when set and is omitted entirely when unset, and `[state].url` is trimmed to `scheme://host` so a `?authToken=` query string never reaches the screen. `file://` paths print in full.
+
+Flags: `--show-secrets` prints the real token and full URL. It exits 4 when stdout is not a terminal, so a redirect or a pipe into a log can't capture the credential.
+
 ### `dfm config path`
 
 Print the resolved config path.

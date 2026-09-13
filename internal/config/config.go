@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -347,6 +348,33 @@ func (c *Config) EncodeTOML() ([]byte, error) {
 		return nil, err
 	}
 	return []byte(sb.String()), nil
+}
+
+// Redacted returns a display-only copy: the auth token becomes a fixed
+// placeholder and the state URL is cut back to scheme://host. An absent
+// token stays absent, so a hidden token reads differently from none at
+// all. Nothing on the write path goes through here.
+func (c *Config) Redacted() *Config {
+	out := *c
+	if out.State.AuthToken != "" {
+		out.State.AuthToken = "<redacted>"
+	}
+	// store trims the URL before using it, so a value with stray
+	// whitespace still works at runtime — and would parse to an empty
+	// Host here and pass through with its query string intact.
+	out.State.URL = scrubURL(strings.TrimSpace(out.State.URL))
+	return &out
+}
+
+// scrubURL keeps a URL to scheme://host. An unparseable or host-less URL
+// passes through unchanged so file:///... paths stay readable. Duplicated
+// from internal/store rather than exported: store imports this package.
+func scrubURL(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		return u
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // SavedAuthToken returns the state.auth_token already written in the
