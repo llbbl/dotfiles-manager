@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.1] - 2026-09-13
+
+### Bug Fixes
+
+- Keep env-only Turso tokens out of config.toml (#84)
 ## [1.13.0] - 2026-09-13
 
 ### Features
