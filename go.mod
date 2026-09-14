@@ -1,10 +1,10 @@
 module github.com/llbbl/dotfiles-manager
 
-go 1.25.14
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/pressly/goose/v3 v3.27.3
+	github.com/pressly/goose/v3 v3.28.0
 	github.com/spf13/cobra v1.10.2
 	turso.tech/database/tursogo v0.7.2
 )
