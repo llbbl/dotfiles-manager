@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,12 +40,16 @@ func childHold() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if _, err := lockFile(filepath.Join(dir, ".dfm.lock")); err != nil {
+	unlock, err := lockFile(filepath.Join(dir, ".dfm.lock"))
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	defer unlock()
 	fmt.Println("ready")
-	select {}
+	// Hold until the parent closes stdin or dies, so a crashed test run can't leak a holder.
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	return 0
 }
 
 func childOpen() int {
@@ -168,12 +173,38 @@ func TestOpen_HungLockHolder_TimesOut(t *testing.T) {
 	}
 }
 
+func TestOpen_UnlockableCache_FallsBackToDriver(t *testing.T) {
+	skipNonUnix(t)
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	cache := t.TempDir()
+	if out, err := childCmd(t, "open", cache).CombinedOutput(); err != nil {
+		t.Fatalf("warm: %v: %s", err, out)
+	}
+	dir := filepath.Join(cache, "turso-go")
+	if err := os.Remove(filepath.Join(dir, ".dfm.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	if out, err := childCmd(t, "open", cache).CombinedOutput(); err != nil {
+		t.Fatalf("open with read-only cache dir: %v: %s", err, out)
+	}
+}
+
 // startHolder runs a child that holds the cache lock until killed.
 func startHolder(t *testing.T, cache string) *exec.Cmd {
 	t.Helper()
 	cmd := childCmd(t, "hold", cache)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmd.StdinPipe(); err != nil {
 		t.Fatal(err)
 	}
 	cmd.Stderr = os.Stderr

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,8 @@ var (
 
 	// ponytail: fixed 30s wait on a hung holder; make it configurable if anyone hits it.
 	lockTimeout = 30 * time.Second
+
+	errLockTimeout = errors.New("timed out")
 )
 
 // ensureNativeLib extracts tursogo's embedded library under a cross-process
@@ -33,8 +36,13 @@ func loadNativeLib() error {
 		return fmt.Errorf("create turso cache dir: %w", err)
 	}
 	unlock, err := lockFile(filepath.Join(dir, ".dfm.lock"))
-	if err != nil {
+	if errors.Is(err, errLockTimeout) {
 		return err
+	}
+	if err != nil {
+		// No usable lock (read-only cache, no flock support, another user's file):
+		// leave loading to the driver, which is exactly the behaviour before this guard.
+		return nil
 	}
 	defer unlock()
 

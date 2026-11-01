@@ -13,7 +13,8 @@ import (
 // lockFile takes an exclusive flock on path. The kernel drops it when the
 // holder exits by any route, so a stale lock file is harmless.
 func lockFile(path string) (func(), error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	// Read-only so another user can still lock a file created by someone else; flock doesn't need write access.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open lock %s: %w", path, err)
 	}
@@ -29,7 +30,7 @@ func lockFile(path string) (func(), error) {
 		}
 		if time.Now().After(deadline) {
 			_ = f.Close()
-			return nil, fmt.Errorf("timed out after %s waiting for lock %s", lockTimeout, path)
+			return nil, fmt.Errorf("%w after %s waiting for lock %s", errLockTimeout, lockTimeout, path)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
