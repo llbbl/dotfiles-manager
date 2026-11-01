@@ -546,6 +546,13 @@ Copy rows from another state database into the active store. By default, imports
 `actions`. Existing rows are skipped unless `--replace` is set. Snapshots whose
 blobs are unavailable locally are skipped with a warning.
 
+Tracked files are matched by path, and `--replace` updates a matched file's row in
+place. Snapshots and suggestions for a file the target doesn't track are kept
+without a file link and reported as warnings, and the import is all-or-nothing:
+any error leaves the target unchanged. History imported without a link stays
+unlinked on a later import; re-run with `tracked_files` included and `--replace`
+to relink it.
+
 Use `--dry-run` to preview row counts, then confirm interactively or pass `--yes`.
 `--json` emits the summary as JSON. The source is opened without running migrations.
 Remote source URLs appear only as `scheme://host` in prompts, errors, debug logs,

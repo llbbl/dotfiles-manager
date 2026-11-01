@@ -81,8 +81,11 @@ It is not — it is sitting in the other backend. Check which one is active
 store. Apply only after reviewing that preview, with interactive confirmation or
 `--yes`. The default tables are `tracked_files,snapshots`; existing rows are
 skipped unless `--replace` is passed, and snapshots with unavailable local blobs
-are skipped. Remote source URLs are reduced to `scheme://host` in prompts,
-errors, and logs; source-open errors omit potentially sensitive driver details.
+are skipped. Tracked files are matched by path (`--replace` updates the matched
+row in place), history for files the target doesn't track is kept unlinked with a
+warning, and any error rolls back the whole import. Remote source URLs are reduced
+to `scheme://host` in prompts, errors, and logs; source-open errors omit
+potentially sensitive driver details.
 
 ### Destructive commands have a fixed contract
 

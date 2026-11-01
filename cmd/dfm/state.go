@@ -43,8 +43,9 @@ func newStateImportCmd() *cobra.Command {
 		Short: "Import rows from another dfm state DB into this one",
 		Long: "Copies tracked_files, snapshots, and (optionally) suggestions / actions " +
 			"from --from <url> into the active state DB. Snapshot rows whose blob is " +
-			"not present in the local blob store are skipped with a warning. Existing " +
-			"rows are skipped unless --replace is set.",
+			"not present in the local blob store are skipped with a warning. Tracked " +
+			"files are matched by path; existing rows are skipped unless --replace is " +
+			"set. The import is all-or-nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if strings.TrimSpace(fromURL) == "" {
