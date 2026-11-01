@@ -145,7 +145,10 @@ func LocalBlobExistsFunc(blobRoot string) func(string) bool {
 	}
 }
 
-// Import copies rows from opts.Source into opts.Target.
+// Import copies rows from opts.Source into opts.Target inside one target
+// transaction, so a failure leaves the target unchanged. A dry run performs
+// the same writes and rolls them back, which keeps its Result identical to a
+// real run's.
 func Import(ctx context.Context, opts Options) (Result, error) {
 	if opts.Source == nil || opts.Target == nil {
 		return Result{}, errors.New("source and target must be non-nil")
@@ -155,33 +158,110 @@ func Import(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
+	tx, err := opts.Target.BeginTx(ctx, nil)
+	if err != nil {
+		return Result{}, fmt.Errorf("begin target transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	r := &run{opts: opts, tx: tx}
+	if err := r.mapFileIDs(ctx); err != nil {
+		return Result{}, fmt.Errorf("match tracked files by path: %w", err)
+	}
+
 	res := Result{DryRun: opts.DryRun}
 	for _, table := range tables {
-		tr, warnings, err := importTable(ctx, opts, table)
+		tr, warnings, err := r.importTable(ctx, table)
 		if err != nil {
-			return res, fmt.Errorf("import %s: %w", table, err)
+			return Result{DryRun: opts.DryRun}, fmt.Errorf("import %s: %w", table, err)
 		}
 		res.Tables = append(res.Tables, tr)
 		res.Warnings = append(res.Warnings, warnings...)
 	}
+
+	if opts.DryRun {
+		if err := tx.Rollback(); err != nil {
+			return Result{}, fmt.Errorf("roll back dry run: %w", err)
+		}
+		return res, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return Result{}, fmt.Errorf("commit: %w", err)
+	}
 	return res, nil
 }
 
-// importTable copies one table. Each known table has its own
-// hand-written SELECT/INSERT pair so we know which column is the
-// primary key and (for snapshots) which column holds the blob
-// hash. Anything outside the AllowedTables list never reaches
-// this function.
-func importTable(ctx context.Context, opts Options, table string) (TableResult, []string, error) {
+// run is one Import's state. fileIDs maps a source tracked_files id to the
+// target id for the same path; a source id missing from it has no target file.
+type run struct {
+	opts    Options
+	tx      *sql.Tx
+	fileIDs map[string]string
+}
+
+// mapFileIDs matches tracked files by path, the only identity two
+// independently created databases share. It runs even when tracked_files
+// isn't imported, so history still links to files the target already tracks.
+func (r *run) mapFileIDs(ctx context.Context) error {
+	byPath, err := pathIDs(ctx, r.tx)
+	if err != nil {
+		return fmt.Errorf("target: %w", err)
+	}
+	src, err := pathIDs(ctx, r.opts.Source)
+	if err != nil {
+		return fmt.Errorf("source: %w", err)
+	}
+	r.fileIDs = make(map[string]string, len(src))
+	for path, srcID := range src {
+		if id, ok := byPath[path]; ok {
+			r.fileIDs[srcID] = id
+		}
+	}
+	return nil
+}
+
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func pathIDs(ctx context.Context, db queryer) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT path, id FROM tracked_files`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var path, id string
+		if err := rows.Scan(&path, &id); err != nil {
+			return nil, err
+		}
+		out[path] = id
+	}
+	return out, rows.Err()
+}
+
+// linkFile rewrites a source file_id to the target's id for the same file.
+// ok is false when the source row pointed at a file the target doesn't track.
+func (r *run) linkFile(fileID sql.NullString) (linked sql.NullString, ok bool) {
+	if !fileID.Valid {
+		return fileID, true
+	}
+	id, ok := r.fileIDs[fileID.String]
+	return sql.NullString{String: id, Valid: ok}, ok
+}
+
+func (r *run) importTable(ctx context.Context, table string) (TableResult, []string, error) {
 	switch table {
 	case "tracked_files":
-		return importTrackedFiles(ctx, opts)
+		return r.importTrackedFiles(ctx)
 	case "snapshots":
-		return importSnapshots(ctx, opts)
+		return r.importSnapshots(ctx)
 	case "suggestions":
-		return importSuggestions(ctx, opts)
+		return r.importSuggestions(ctx)
 	case "actions":
-		return importActions(ctx, opts)
+		return r.importActions(ctx)
 	default:
 		// Unreachable: ValidateTables gates this.
 		return TableResult{}, nil, fmt.Errorf("unhandled table %q", table)
@@ -190,7 +270,7 @@ func importTable(ctx context.Context, opts Options, table string) (TableResult, 
 
 // rowExists returns true if a row with the given primary-key
 // value already exists in the target table.
-func rowExists(ctx context.Context, db *sql.DB, table, pkCol string, pk any) (bool, error) {
+func rowExists(ctx context.Context, db queryer, table, pkCol string, pk any) (bool, error) {
 	q := fmt.Sprintf(`SELECT 1 FROM %s WHERE %s = ? LIMIT 1`, table, pkCol)
 	var one int
 	err := db.QueryRowContext(ctx, q, pk).Scan(&one)
@@ -203,9 +283,9 @@ func rowExists(ctx context.Context, db *sql.DB, table, pkCol string, pk any) (bo
 	return false, err
 }
 
-func importTrackedFiles(ctx context.Context, opts Options) (TableResult, []string, error) {
+func (r *run) importTrackedFiles(ctx context.Context) (TableResult, []string, error) {
 	res := TableResult{Table: "tracked_files"}
-	rows, err := opts.Source.QueryContext(ctx,
+	rows, err := r.opts.Source.QueryContext(ctx,
 		`SELECT id, path, display_path, added_at, last_hash, last_synced FROM tracked_files`)
 	if err != nil {
 		return res, nil, fmt.Errorf("select: %w", err)
@@ -224,37 +304,38 @@ func importTrackedFiles(ctx context.Context, opts Options) (TableResult, []strin
 		if err := rows.Scan(&id, &path, &displayPath, &addedAt, &lastHash, &lastSynced); err != nil {
 			return res, nil, fmt.Errorf("scan: %w", err)
 		}
-		exists, err := rowExists(ctx, opts.Target, "tracked_files", "id", id)
-		if err != nil {
-			return res, nil, fmt.Errorf("check existing id=%s: %w", id, err)
-		}
-		if exists && !opts.Replace {
+		targetID, matched := r.fileIDs[id]
+		switch {
+		case matched && !r.opts.Replace:
 			res.SkippedExisting++
 			continue
-		}
-		if opts.DryRun {
-			res.Imported++
-			continue
-		}
-		verb := "INSERT"
-		if exists {
-			verb = "INSERT OR REPLACE"
-		}
-		if _, err := opts.Target.ExecContext(ctx,
-			verb+` INTO tracked_files (id, path, display_path, added_at, last_hash, last_synced)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			id, path, displayPath, addedAt, lastHash, lastSynced); err != nil {
-			return res, nil, fmt.Errorf("insert id=%s: %w", id, err)
+		case matched:
+			// Update in place: replacing the row would change its id and
+			// unlink the target's own history.
+			if _, err := r.tx.ExecContext(ctx,
+				`UPDATE tracked_files SET display_path = ?, added_at = ?, last_hash = ?, last_synced = ?
+				 WHERE id = ?`,
+				displayPath, addedAt, lastHash, lastSynced, targetID); err != nil {
+				return res, nil, fmt.Errorf("update id=%s: %w", targetID, err)
+			}
+		default:
+			if _, err := r.tx.ExecContext(ctx,
+				`INSERT INTO tracked_files (id, path, display_path, added_at, last_hash, last_synced)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				id, path, displayPath, addedAt, lastHash, lastSynced); err != nil {
+				return res, nil, fmt.Errorf("insert id=%s: %w", id, err)
+			}
+			r.fileIDs[id] = id
 		}
 		res.Imported++
 	}
 	return res, nil, rows.Err()
 }
 
-func importSnapshots(ctx context.Context, opts Options) (TableResult, []string, error) {
+func (r *run) importSnapshots(ctx context.Context) (TableResult, []string, error) {
 	res := TableResult{Table: "snapshots"}
 	var warnings []string
-	rows, err := opts.Source.QueryContext(ctx,
+	rows, err := r.opts.Source.QueryContext(ctx,
 		`SELECT id, file_id, path, hash, size, reason, created_at, storage_path FROM snapshots`)
 	if err != nil {
 		return res, nil, fmt.Errorf("select: %w", err)
@@ -275,29 +356,30 @@ func importSnapshots(ctx context.Context, opts Options) (TableResult, []string, 
 		if err := rows.Scan(&id, &fileID, &path, &hash, &size, &reason, &createdAt, &storagePath); err != nil {
 			return res, nil, fmt.Errorf("scan: %w", err)
 		}
-		if opts.BlobExists != nil && !opts.BlobExists(hash) {
+		if r.opts.BlobExists != nil && !r.opts.BlobExists(hash) {
 			res.SkippedMissingBlob++
 			warnings = append(warnings,
 				fmt.Sprintf("snapshot %s: blob %s not in local store; skipped", id, shortHash(hash)))
 			continue
 		}
-		exists, err := rowExists(ctx, opts.Target, "snapshots", "id", id)
+		exists, err := rowExists(ctx, r.tx, "snapshots", "id", id)
 		if err != nil {
 			return res, nil, fmt.Errorf("check existing id=%s: %w", id, err)
 		}
-		if exists && !opts.Replace {
+		if exists && !r.opts.Replace {
 			res.SkippedExisting++
 			continue
 		}
-		if opts.DryRun {
-			res.Imported++
-			continue
+		fileID, ok := r.linkFile(fileID)
+		if !ok {
+			warnings = append(warnings,
+				fmt.Sprintf("snapshot %s: %s is not tracked in the target; imported without a file link", id, path))
 		}
 		verb := "INSERT"
 		if exists {
 			verb = "INSERT OR REPLACE"
 		}
-		if _, err := opts.Target.ExecContext(ctx,
+		if _, err := r.tx.ExecContext(ctx,
 			verb+` INTO snapshots (id, file_id, path, hash, size, reason, created_at, storage_path)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, fileID, path, hash, size, reason, createdAt, storagePath); err != nil {
@@ -308,9 +390,10 @@ func importSnapshots(ctx context.Context, opts Options) (TableResult, []string, 
 	return res, warnings, rows.Err()
 }
 
-func importSuggestions(ctx context.Context, opts Options) (TableResult, []string, error) {
+func (r *run) importSuggestions(ctx context.Context) (TableResult, []string, error) {
 	res := TableResult{Table: "suggestions"}
-	rows, err := opts.Source.QueryContext(ctx,
+	var warnings []string
+	rows, err := r.opts.Source.QueryContext(ctx,
 		`SELECT id, file_id, provider, prompt, diff, status, created_at, decided_at FROM suggestions`)
 	if err != nil {
 		return res, nil, fmt.Errorf("select: %w", err)
@@ -331,23 +414,24 @@ func importSuggestions(ctx context.Context, opts Options) (TableResult, []string
 		if err := rows.Scan(&id, &fileID, &provider, &prompt, &diff, &status, &createdAt, &decidedAt); err != nil {
 			return res, nil, fmt.Errorf("scan: %w", err)
 		}
-		exists, err := rowExists(ctx, opts.Target, "suggestions", "id", id)
+		exists, err := rowExists(ctx, r.tx, "suggestions", "id", id)
 		if err != nil {
 			return res, nil, fmt.Errorf("check existing id=%s: %w", id, err)
 		}
-		if exists && !opts.Replace {
+		if exists && !r.opts.Replace {
 			res.SkippedExisting++
 			continue
 		}
-		if opts.DryRun {
-			res.Imported++
-			continue
+		fileID, ok := r.linkFile(fileID)
+		if !ok {
+			warnings = append(warnings,
+				fmt.Sprintf("suggestion %s: its file is not tracked in the target; imported without a file link", id))
 		}
 		verb := "INSERT"
 		if exists {
 			verb = "INSERT OR REPLACE"
 		}
-		if _, err := opts.Target.ExecContext(ctx,
+		if _, err := r.tx.ExecContext(ctx,
 			verb+` INTO suggestions (id, file_id, provider, prompt, diff, status, created_at, decided_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, fileID, provider, prompt, diff, status, createdAt, decidedAt); err != nil {
@@ -355,12 +439,12 @@ func importSuggestions(ctx context.Context, opts Options) (TableResult, []string
 		}
 		res.Imported++
 	}
-	return res, nil, rows.Err()
+	return res, warnings, rows.Err()
 }
 
-func importActions(ctx context.Context, opts Options) (TableResult, []string, error) {
+func (r *run) importActions(ctx context.Context) (TableResult, []string, error) {
 	res := TableResult{Table: "actions"}
-	rows, err := opts.Source.QueryContext(ctx,
+	rows, err := r.opts.Source.QueryContext(ctx,
 		`SELECT id, ts, action, payload_json FROM actions`)
 	if err != nil {
 		return res, nil, fmt.Errorf("select: %w", err)
@@ -377,23 +461,19 @@ func importActions(ctx context.Context, opts Options) (TableResult, []string, er
 		if err := rows.Scan(&id, &ts, &action, &payloadJSON); err != nil {
 			return res, nil, fmt.Errorf("scan: %w", err)
 		}
-		exists, err := rowExists(ctx, opts.Target, "actions", "id", id)
+		exists, err := rowExists(ctx, r.tx, "actions", "id", id)
 		if err != nil {
 			return res, nil, fmt.Errorf("check existing id=%d: %w", id, err)
 		}
-		if exists && !opts.Replace {
+		if exists && !r.opts.Replace {
 			res.SkippedExisting++
-			continue
-		}
-		if opts.DryRun {
-			res.Imported++
 			continue
 		}
 		verb := "INSERT"
 		if exists {
 			verb = "INSERT OR REPLACE"
 		}
-		if _, err := opts.Target.ExecContext(ctx,
+		if _, err := r.tx.ExecContext(ctx,
 			verb+` INTO actions (id, ts, action, payload_json) VALUES (?, ?, ?, ?)`,
 			id, ts, action, payloadJSON); err != nil {
 			return res, nil, fmt.Errorf("insert id=%d: %w", id, err)
