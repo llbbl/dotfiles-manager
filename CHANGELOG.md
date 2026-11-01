@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [unreleased]
+
+### Bug Fixes
+
+- Reconcile tracked files by path during state import (#107)
 ## [1.13.9] - 2026-11-01
 
 ### Bug Fixes
