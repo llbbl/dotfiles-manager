@@ -1,7 +1,6 @@
 -- Children are copied out and dropped before their parent, and every table is
--- recreated under its final name with no RENAME, so the rebuild is correct
--- whether or not foreign keys are enforced: PRAGMA foreign_keys is a no-op
--- inside goose's transaction, so it cannot be switched off here.
+-- recreated under its final name with no RENAME, so the rebuild doesn't depend
+-- on the foreign_keys setting of the connection goose runs it on.
 
 -- +goose Up
 -- +goose StatementBegin

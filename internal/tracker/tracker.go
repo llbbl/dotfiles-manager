@@ -348,8 +348,8 @@ func Untrack(ctx context.Context, s *store.Store, target string) (File, error) {
 	if f == nil {
 		return File{}, ErrNotTracked
 	}
-	// Clear history links explicitly: remote (sync) connections can't enable
-	// foreign keys, so ON DELETE SET NULL only fires in local mode.
+	// Clear history links explicitly: foreign keys aren't enabled on remote
+	// (sync) connections, so ON DELETE SET NULL only fires in local mode.
 	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return File{}, fmt.Errorf("begin untrack: %w", err)

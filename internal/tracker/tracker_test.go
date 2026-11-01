@@ -223,6 +223,12 @@ func TestUntrack_WithHistory_NullsFileIDs(t *testing.T) {
 		t.Fatalf("insert suggestion: %v", err)
 	}
 
+	// One connection with foreign keys off, as remote mode runs, so this fails if
+	// Untrack relies on ON DELETE SET NULL instead of clearing links itself.
+	s.DB().SetMaxOpenConns(1)
+	if _, err := s.DB().ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Untrack(ctx, s, canon); err != nil {
 		t.Fatalf("Untrack: %v", err)
 	}

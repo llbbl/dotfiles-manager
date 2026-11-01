@@ -113,6 +113,9 @@ func TestMigration0003_UpAndDown_PreservesFileLinks(t *testing.T) {
 		t.Errorf("tracked_files rows = %d, want 3", len(seen))
 	}
 	assertSchema(t, db)
+	assertDDL(t, db, "tracked_files", "id TEXT PRIMARY KEY NOT NULL", "path TEXT UNIQUE NOT NULL", "display_path TEXT NOT NULL", "added_at TEXT NOT NULL")
+	assertDDL(t, db, "snapshots", "file_id TEXT REFERENCES tracked_files (id) ON DELETE SET NULL", "path TEXT NOT NULL", "storage_path TEXT NOT NULL")
+	assertDDL(t, db, "suggestions", "file_id TEXT REFERENCES tracked_files (id) ON DELETE SET NULL", "provider TEXT NOT NULL", "status TEXT NOT NULL")
 
 	if err := RunGoose(ctx, db, "down-to", "2"); err != nil {
 		t.Fatalf("down-to 2: %v", err)
@@ -126,6 +129,25 @@ func TestMigration0003_UpAndDown_PreservesFileLinks(t *testing.T) {
 		t.Errorf("%d tracked_files ids are not integers after down", bad)
 	}
 	assertSchema(t, db)
+	assertDDL(t, db, "tracked_files", "id INTEGER PRIMARY KEY", "path TEXT UNIQUE NOT NULL", "display_path TEXT NOT NULL")
+	assertDDL(t, db, "snapshots", "file_id INTEGER REFERENCES tracked_files (id) ON DELETE SET NULL", "storage_path TEXT NOT NULL")
+	assertDDL(t, db, "suggestions", "file_id INTEGER REFERENCES tracked_files (id)", "provider TEXT NOT NULL")
+}
+
+// assertDDL checks column definitions by fragment, whitespace-normalised, since
+// assertSchema only proves the objects exist.
+func assertDDL(t *testing.T, db *sql.DB, table string, fragments ...string) {
+	t.Helper()
+	var ddl string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&ddl); err != nil {
+		t.Fatalf("%s ddl: %v", table, err)
+	}
+	ddl = strings.Join(strings.Fields(ddl), " ")
+	for _, f := range fragments {
+		if !strings.Contains(ddl, f) {
+			t.Errorf("%s ddl missing %q: %s", table, f, ddl)
+		}
+	}
 }
 
 func assertLinks(t *testing.T, db *sql.DB, want map[string]string) {
