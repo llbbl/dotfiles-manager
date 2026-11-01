@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.7] - 2026-11-01
+
+### Bug Fixes
+
+- deps: Bump tursogo to v0.8.3
 ## [1.13.6] - 2026-11-01
 
 ### Refactoring
