@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.9] - 2026-11-01
+
+### Bug Fixes
+
+- Use globally unique text ids for tracked files (#106)
+## [1.13.8] - 2026-11-01
+
+### Bug Fixes
+
+- Serialise Turso native library extraction across processes (#105)
 ## [1.13.7] - 2026-11-01
 
 ### Bug Fixes
