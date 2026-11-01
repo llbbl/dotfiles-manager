@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [unreleased]
+## [1.13.10] - 2026-11-01
 
 ### Bug Fixes
 
