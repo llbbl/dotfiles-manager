@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.4] - 2026-11-01
+
+### Bug Fixes
+
+- Harden dotfile maintenance and update Go toolchain
 ## [1.13.3] - 2026-09-13
 
 ### Bug Fixes
