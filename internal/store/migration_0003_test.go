@@ -114,7 +114,7 @@ func TestMigration0003_UpAndDown_PreservesFileLinks(t *testing.T) {
 	}
 	assertSchema(t, db)
 	assertDDL(t, db, "tracked_files", "id TEXT PRIMARY KEY NOT NULL", "path TEXT UNIQUE NOT NULL", "display_path TEXT NOT NULL", "added_at TEXT NOT NULL")
-	assertDDL(t, db, "snapshots", "file_id TEXT REFERENCES tracked_files (id) ON DELETE SET NULL", "path TEXT NOT NULL", "storage_path TEXT NOT NULL")
+	assertDDL(t, db, "snapshots", "file_id TEXT REFERENCES tracked_files (id) ON DELETE SET NULL", ", path TEXT NOT NULL", "storage_path TEXT NOT NULL")
 	assertDDL(t, db, "suggestions", "file_id TEXT REFERENCES tracked_files (id) ON DELETE SET NULL", "provider TEXT NOT NULL", "status TEXT NOT NULL")
 
 	if err := RunGoose(ctx, db, "down-to", "2"); err != nil {
