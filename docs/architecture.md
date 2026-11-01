@@ -28,7 +28,7 @@ Every package is intentionally small. The interesting decisions live in the seam
 
 ## State store: `internal/store` + `internal/config`
 
-State lives in a libSQL database — either an embedded file at `~/.local/share/dotfiles/state.db` (default) or a remote Turso instance when `TURSO_DATABASE_URL` is set. The driver is [`turso.tech/database/tursogo`](https://docs.turso.tech/sdk/go/quickstart), pure-Go (no cgo), supporting both local file and remote URLs through a single `sql.Open("turso", …)` interface.
+State lives in a libSQL database — either an embedded file at `~/.local/share/dotfiles/state.db` (default) or a remote Turso instance when `TURSO_DATABASE_URL` is set. The driver is [`turso.tech/database/tursogo`](https://docs.turso.tech/sdk/go/quickstart), pure-Go (no cgo), supporting both local file and remote URLs through a single `sql.Open("turso", …)` interface. The driver's native library is extracted on first use to `turso-go/` under the user cache directory (or `$TURSO_GO_CACHE_DIR`); dfm serialises that extraction across processes with a lock file there and re-extracts a corrupt copy.
 
 Migrations are managed by [`pressly/goose`](https://github.com/pressly/goose) as a library (no goose CLI required at runtime). SQL files live under `internal/store/migrations/` and are embedded into the binary via `go:embed`. `dfm migrate {status,up,down,redo}` exposes the same operations to operators.
 
