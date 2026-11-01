@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.6] - 2026-11-01
+
+### Refactoring
+
+- Remove unreachable methods flagged by deadcode
 ## [1.13.5] - 2026-11-01
 
 ### Bug Fixes
