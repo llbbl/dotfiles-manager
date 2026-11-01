@@ -267,6 +267,39 @@ func (r *Repo) AheadBehind(ctx context.Context) (int, int, error) {
 	return ahead, behind, nil
 }
 
+// PendingPush reports whether the current branch has commits to push to origin.
+// A branch with no commits is a no-op; a committed branch without an origin ref
+// needs its first push. Fetch before calling to compare against current refs.
+func (r *Repo) PendingPush(ctx context.Context) (bool, error) {
+	out, _, err := runGit(ctx, r.path, "symbolic-ref", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	localRef := strings.TrimSpace(out)
+	if !strings.HasPrefix(localRef, "refs/heads/") {
+		return false, errors.New("current HEAD does not refer to a local branch")
+	}
+	branch := strings.TrimPrefix(localRef, "refs/heads/")
+	remoteRef := "refs/remotes/origin/" + branch
+	out, _, err = runGit(ctx, r.path, "for-each-ref", "--format=%(refname)", localRef, remoteRef)
+	if err != nil {
+		return false, err
+	}
+	var localExists, remoteExists bool
+	for ref := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		localExists = localExists || ref == localRef
+		remoteExists = remoteExists || ref == remoteRef
+	}
+	if !localExists {
+		return false, nil
+	}
+	if !remoteExists {
+		return true, nil
+	}
+	ahead, _, err := r.AheadBehind(ctx)
+	return ahead > 0, err
+}
+
 // Log returns up to n commits (newest first).
 func (r *Repo) Log(ctx context.Context, n int) ([]Commit, error) {
 	if n <= 0 {

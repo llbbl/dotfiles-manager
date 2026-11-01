@@ -110,6 +110,69 @@ func TestSnapshot_DeduplicatesIdenticalContent(t *testing.T) {
 	}
 }
 
+func TestSnapshot_ExistingTemporarySibling_PreservesFile(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		name := "regular file"
+		if symlink {
+			name = "symlink"
+		}
+		t.Run(name, func(t *testing.T) {
+			mgr, _, dir := newTestManager(t)
+			p := filepath.Join(dir, "source")
+			const content = "snapshot content\n"
+			writeFile(t, p, content)
+			sum := sha256.Sum256([]byte(content))
+			blob := mgr.blobPath(hex.EncodeToString(sum[:]))
+			if err := os.MkdirAll(filepath.Dir(blob), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			sibling := blob + ".tmp"
+			untouched := sibling
+			if symlink {
+				untouched = filepath.Join(dir, "unrelated")
+				if err := os.Symlink(untouched, sibling); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFile(t, untouched, "unrelated content\n")
+			snap, err := mgr.Snapshot(context.Background(), p, nil, ReasonManual)
+			if err != nil {
+				t.Fatalf("Snapshot: %v", err)
+			}
+			assertFileContent(t, snap.StoragePath, content)
+			assertFileContent(t, untouched, "unrelated content\n")
+			if _, err := os.Lstat(sibling); err != nil {
+				t.Fatalf("existing sibling removed: %v", err)
+			}
+			entries, err := os.ReadDir(filepath.Dir(blob))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 2 {
+				t.Errorf("want blob and existing sibling only, got %d entries", len(entries))
+			}
+			info, err := os.Stat(blob)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o600 {
+				t.Errorf("blob permissions = %o, want 600", info.Mode().Perm())
+			}
+		})
+	}
+}
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("unexpected contents for %s", path)
+	}
+}
+
 func TestRestore_HappyPath(t *testing.T) {
 	mgr, _, dir := newTestManager(t)
 	ctx := context.Background()
@@ -138,6 +201,86 @@ func TestRestore_HappyPath(t *testing.T) {
 	}
 	if string(data) != "original-content\n" {
 		t.Errorf("data = %q", data)
+	}
+}
+
+func TestRestore_ExistingTemporarySibling_PreservesFile(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		name := "regular file"
+		if symlink {
+			name = "symlink"
+		}
+		t.Run(name, func(t *testing.T) {
+			mgr, _, dir := newTestManager(t)
+			src := filepath.Join(dir, "source")
+			writeFile(t, src, "snapshot content\n")
+			if err := os.Chmod(src, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			snap, err := mgr.Snapshot(context.Background(), src, nil, ReasonManual)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest := filepath.Join(dir, "restore", "destination")
+			if err := os.Mkdir(filepath.Dir(dest), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			sibling := dest + ".tmp"
+			untouched := sibling
+			if symlink {
+				untouched = filepath.Join(dir, "unrelated")
+				if err := os.Symlink(untouched, sibling); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFile(t, untouched, "unrelated content\n")
+			if _, _, err := mgr.Restore(context.Background(), snap.ID, dest, RestoreOptions{}); err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
+			assertFileContent(t, dest, "snapshot content\n")
+			assertFileContent(t, untouched, "unrelated content\n")
+			if _, err := os.Lstat(sibling); err != nil {
+				t.Fatalf("existing sibling removed: %v", err)
+			}
+			entries, err := os.ReadDir(filepath.Dir(dest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 2 {
+				t.Errorf("want destination and existing sibling only, got %d entries", len(entries))
+			}
+			info, err := os.Stat(dest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o640 {
+				t.Errorf("restored permissions = %o, want 640", info.Mode().Perm())
+			}
+		})
+	}
+}
+
+func TestRestore_RenameFailure_CleansTemporaryFile(t *testing.T) {
+	mgr, _, dir := newTestManager(t)
+	src := filepath.Join(dir, "source")
+	writeFile(t, src, "snapshot content\n")
+	snap, err := mgr.Snapshot(context.Background(), src, nil, ReasonManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "restore", "directory")
+	if err := os.MkdirAll(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := mgr.Restore(context.Background(), snap.ID, dest, RestoreOptions{Overwrite: true}); err == nil {
+		t.Fatal("expected rename over directory to fail")
+	}
+	entries, err := os.ReadDir(filepath.Dir(dest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "directory" {
+		t.Fatal("restore left a temporary file after rename failure")
 	}
 }
 

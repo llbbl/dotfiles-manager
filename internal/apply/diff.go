@@ -71,14 +71,20 @@ func parse(diff string, tolerant bool) (FileSet, error) {
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 
 	var (
-		fs            FileSet
+		fs             FileSet
 		sawOld, sawNew bool
-		curHunk       *Hunk
+		curHunk        *Hunk
+		bareHunk       bool
+		oldSeen        int
+		newSeen        int
 	)
 
 	flushHunk := func() error {
 		if curHunk == nil {
 			return nil
+		}
+		if !bareHunk && (oldSeen != curHunk.OldCount || newSeen != curHunk.NewCount) {
+			return fmt.Errorf("%w: hunk line counts do not match ranges", ErrDiffMalformed)
 		}
 		fs.Hunks = append(fs.Hunks, *curHunk)
 		curHunk = nil
@@ -87,30 +93,51 @@ func parse(diff string, tolerant bool) (FileSet, error) {
 
 	for sc.Scan() {
 		line := sc.Text()
+		// Range counts disambiguate file headers from removed "-- text"
+		// and added "++ text" lines inside a hunk. Keep the completed
+		// hunk around so a trailing no-newline marker still attaches to it.
+		inHunk := curHunk != nil && (bareHunk || oldSeen != curHunk.OldCount || newSeen != curHunk.NewCount)
 		switch {
-		case strings.HasPrefix(line, "--- "):
+		case strings.HasPrefix(line, "--- ") && !inHunk:
 			if sawOld {
 				return FileSet{}, fmt.Errorf("%w: multiple file headers", ErrDiffMalformed)
 			}
 			fs.OldPath = strings.TrimSpace(strings.TrimPrefix(line, "--- "))
 			sawOld = true
-		case strings.HasPrefix(line, "+++ "):
+		case strings.HasPrefix(line, "+++ ") && !inHunk:
 			if sawNew {
 				return FileSet{}, fmt.Errorf("%w: multiple file headers", ErrDiffMalformed)
 			}
 			fs.NewPath = strings.TrimSpace(strings.TrimPrefix(line, "+++ "))
 			sawNew = true
 		case strings.HasPrefix(line, "diff "), strings.HasPrefix(line, "index "):
-			// Advisory; ignore.
+			// Advisory metadata is only valid before the first hunk.
+			if curHunk != nil {
+				return FileSet{}, fmt.Errorf("%w: unexpected file metadata", ErrDiffMalformed)
+			}
 		case strings.HasPrefix(line, "@@"):
+			// A bare hunk has no counts to distinguish a trailing pair of
+			// header-like body lines from a second file's headers. Reject
+			// that ambiguity before another hunk rather than applying a
+			// possible second-file patch to the first file.
+			if bareHunk && curHunk != nil && len(curHunk.Lines) >= 2 {
+				lines := curHunk.Lines
+				old, next := lines[len(lines)-2], lines[len(lines)-1]
+				if old.Kind == '-' && strings.HasPrefix(old.Text, "-- ") &&
+					next.Kind == '+' && strings.HasPrefix(next.Text, "++ ") {
+					return FileSet{}, fmt.Errorf("%w: ambiguous file headers after bare hunk", ErrDiffMalformed)
+				}
+			}
 			if err := flushHunk(); err != nil {
 				return FileSet{}, err
 			}
-			h, err := parseHunkHeader(line, tolerant)
+			h, bare, err := parseHunkHeader(line, tolerant)
 			if err != nil {
 				return FileSet{}, err
 			}
 			curHunk = &h
+			bareHunk = bare
+			oldSeen, newSeen = 0, 0
 		case strings.HasPrefix(line, `\ `):
 			// "\ No newline at end of file"
 			if curHunk == nil || len(curHunk.Lines) == 0 {
@@ -124,13 +151,24 @@ func parse(diff string, tolerant bool) (FileSet, error) {
 			}
 			if line == "" {
 				curHunk.Lines = append(curHunk.Lines, HunkLine{Kind: ' ', Text: ""})
-				continue
+				oldSeen++
+				newSeen++
+			} else {
+				switch line[0] {
+				case ' ', '+', '-':
+					curHunk.Lines = append(curHunk.Lines, HunkLine{Kind: line[0], Text: line[1:]})
+					if line[0] != '+' {
+						oldSeen++
+					}
+					if line[0] != '-' {
+						newSeen++
+					}
+				default:
+					return FileSet{}, fmt.Errorf("%w: unexpected line prefix", ErrDiffMalformed)
+				}
 			}
-			switch line[0] {
-			case ' ', '+', '-':
-				curHunk.Lines = append(curHunk.Lines, HunkLine{Kind: line[0], Text: line[1:]})
-			default:
-				return FileSet{}, fmt.Errorf("%w: unexpected line prefix", ErrDiffMalformed)
+			if !bareHunk && (oldSeen > curHunk.OldCount || newSeen > curHunk.NewCount) {
+				return FileSet{}, fmt.Errorf("%w: hunk line counts exceed ranges", ErrDiffMalformed)
 			}
 		}
 	}
@@ -149,10 +187,10 @@ func parse(diff string, tolerant bool) (FileSet, error) {
 	return fs, nil
 }
 
-func parseHunkHeader(line string, tolerant bool) (Hunk, error) {
+func parseHunkHeader(line string, tolerant bool) (Hunk, bool, error) {
 	// @@ -OLD_START,OLD_COUNT +NEW_START,NEW_COUNT @@ optional context
-	bad := func() (Hunk, error) {
-		return Hunk{}, fmt.Errorf("%w: bad hunk header %q", ErrDiffMalformed, line)
+	bad := func() (Hunk, bool, error) {
+		return Hunk{}, false, fmt.Errorf("%w: bad hunk header", ErrDiffMalformed)
 	}
 	rest := strings.TrimPrefix(line, "@@")
 	idx := strings.Index(rest, "@@")
@@ -160,7 +198,7 @@ func parseHunkHeader(line string, tolerant bool) (Hunk, error) {
 		// Bare `@@` with no trailing `@@` — e.g. just "@@" on its own
 		// line. In tolerant mode, emit a sentinel hunk.
 		if tolerant && strings.TrimSpace(rest) == "" {
-			return Hunk{}, nil
+			return Hunk{}, true, nil
 		}
 		return bad()
 	}
@@ -170,7 +208,7 @@ func parseHunkHeader(line string, tolerant bool) (Hunk, error) {
 		// Bare `@@ @@` (no usable ranges). Tolerant mode emits a
 		// sentinel; strict mode rejects.
 		if tolerant {
-			return Hunk{}, nil
+			return Hunk{}, true, nil
 		}
 		return bad()
 	}
@@ -185,7 +223,7 @@ func parseHunkHeader(line string, tolerant bool) (Hunk, error) {
 	return Hunk{
 		OldStart: oldStart, OldCount: oldCount,
 		NewStart: newStart, NewCount: newCount,
-	}, nil
+	}, false, nil
 }
 
 func parseRange(s string, sign byte) (int, int, error) {

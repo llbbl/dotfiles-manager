@@ -65,6 +65,55 @@ func TestInitLocal_WriteFile_CommitAll(t *testing.T) {
 	}
 }
 
+func TestPendingPush_TracksCommittedBranchAndOrigin(t *testing.T) {
+	requireGit(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, err := InitLocal(ctx, newCfg(t, newBareRemote(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(want bool) {
+		t.Helper()
+		got, err := r.PendingPush(ctx)
+		if err != nil || got != want {
+			t.Fatalf("PendingPush() = %v, %v; want %v, nil", got, err, want)
+		}
+	}
+	check(false) // Unborn branch has nothing to push.
+	if err := r.WriteFile("a.txt", []byte("first\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitAll(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	check(true) // First push has no origin/main ref yet.
+	if err := r.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+	if err := r.WriteFile("a.txt", []byte("second\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitAll(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	if err := r.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+
+	canceled, stop := context.WithCancel(ctx)
+	stop()
+	if _, err := r.PendingPush(canceled); err == nil {
+		t.Fatal("canceled Git query must return an error")
+	}
+	if _, err := (&Repo{path: t.TempDir()}).PendingPush(ctx); err == nil {
+		t.Fatal("invalid repository must return an error")
+	}
+}
+
 func TestPathEscape_Rejected(t *testing.T) {
 	requireGit(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -429,6 +429,12 @@ Flags:
 
 Mirror every tracked file into the backup repo under `files/<sanitized-path>`, take a pre-sync snapshot of each, append per-file and summary records to `logs/actions.jsonl`, commit with a structured message, and push.
 
+If a push fails after the commit was created, rerun `dfm sync` to push the pending
+commits even when the tracked files have not changed. An unchanged, fully synced
+repo reports `no changes` and does not push. In the JSON summary, `empty` means no
+new commit was created, while `pushed` reports whether this run pushed commits;
+a push retry has `empty: true`, `pushed: true`, and an empty `commit` field.
+
 Flags:
 
 - `--dry-run` — show the plan without writing or pushing.
@@ -479,6 +485,11 @@ Flags:
 
 Preview, snapshot, and apply a pending suggestion in-process. The unified diff is parsed and applied directly (no shell-out to `patch`). Before the file is written, the pre-apply snapshot is captured so any mistake is reversible via `dfm restore`.
 
+Only single-file diffs are accepted, and numbered hunk ranges must match their
+contents. Lines beginning `-- ` or `++ ` can be changed normally. For legacy bare
+`@@` hunks, a header-like removal/addition pair immediately before another hunk
+is ambiguous with a second file and is refused; use numbered ranges instead.
+
 Flags: `--yes` (skip confirmation), `--json`.
 
 Any unambiguous id prefix works, including the shortened ids `dfm suggestions` prints. An ambiguous prefix lists the matching ids and exits 7.
@@ -520,6 +531,19 @@ Evict snapshots by retention window + total-size cap. The most recent snapshot p
 Flags: `--dry-run`, `--json`.
 
 ## State database
+
+### `dfm state import --from <url>`
+
+Copy rows from another state database into the active store. By default, imports
+`tracked_files` and `snapshots`; `--tables` can also select `suggestions` and
+`actions`. Existing rows are skipped unless `--replace` is set. Snapshots whose
+blobs are unavailable locally are skipped with a warning.
+
+Use `--dry-run` to preview row counts, then confirm interactively or pass `--yes`.
+`--json` emits the summary as JSON. The source is opened without running migrations.
+Remote source URLs appear only as `scheme://host` in prompts, errors, debug logs,
+and audit records; malformed URLs are redacted. Source-open errors omit driver
+details that might contain credentials.
 
 ### `dfm migrate <status|up|down|redo>`
 

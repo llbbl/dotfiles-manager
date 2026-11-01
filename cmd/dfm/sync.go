@@ -48,10 +48,10 @@ type fileChange struct {
 // --json emits the sync summary as JSON.
 func newSyncCmd() *cobra.Command {
 	var (
-		dryRun     bool
-		message    string
-		strategyF  string
-		asJSON     bool
+		dryRun    bool
+		message   string
+		strategyF string
+		asJSON    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sync",
@@ -88,6 +88,7 @@ func newSyncCmd() *cobra.Command {
 			}
 			defer s.Close()
 
+			pushed := false
 			if !dryRun {
 				if err := repo.Fetch(ctx); err != nil {
 					// Fetch can fail if no upstream exists yet — that's fine
@@ -96,7 +97,8 @@ func newSyncCmd() *cobra.Command {
 				}
 				ahead, behind, err := repo.AheadBehind(ctx)
 				if err == nil && behind > 0 {
-					if err := resolveDrift(c, repo, ctx, strategy, ahead, behind); err != nil {
+					pushed, err = resolveDrift(c, repo, ctx, strategy, ahead, behind)
+					if err != nil {
 						return err
 					}
 				}
@@ -222,19 +224,28 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !res.Empty {
-				if err := repo.Push(ctx); err != nil {
+			pushNeeded := !res.Empty
+			if res.Empty {
+				pushNeeded, err = repo.PendingPush(ctx)
+				if err != nil {
 					return err
 				}
 			}
+			if pushNeeded {
+				if err := repo.Push(ctx); err != nil {
+					return err
+				}
+				pushed = true
+			}
 
 			summary := map[string]any{
-				"changes":    len(changes),
-				"modified":   modCount,
-				"new":        newCount,
-				"commit":     res.SHA,
-				"empty":      res.Empty,
-				"branch":     res.Branch,
+				"changes":  len(changes),
+				"modified": modCount,
+				"new":      newCount,
+				"commit":   res.SHA,
+				"empty":    res.Empty,
+				"pushed":   pushed,
+				"branch":   res.Branch,
 			}
 			if err := auditLog(ctx, "sync", summary); err != nil {
 				return err
@@ -247,7 +258,11 @@ func newSyncCmd() *cobra.Command {
 				return writeJSON(c.OutOrStdout(), summary)
 			}
 			if res.Empty {
-				fmt.Fprintln(c.OutOrStdout(), "sync: no changes")
+				if pushed {
+					fmt.Fprintf(c.OutOrStdout(), "sync: pushed pending commits to origin/%s (no new commit)\n", res.Branch)
+				} else {
+					fmt.Fprintln(c.OutOrStdout(), "sync: no changes")
+				}
 				return nil
 			}
 			shortSHA := res.SHA
@@ -359,19 +374,20 @@ func buildCommitBody(changes []fileChange) string {
 	return b.String()
 }
 
-func resolveDrift(c *cobra.Command, repo *vcs.Repo, ctx context.Context, strategy syncStrategy, ahead, behind int) error {
+func resolveDrift(c *cobra.Command, repo *vcs.Repo, ctx context.Context, strategy syncStrategy, ahead, behind int) (bool, error) {
 	switch strategy {
 	case stratKeepLocal:
-		return repo.PushForce(ctx)
+		err := repo.PushForce(ctx)
+		return err == nil, err
 	case stratKeepRemote:
-		return repo.PullKeepRemote(ctx)
+		return false, repo.PullKeepRemote(ctx)
 	case stratAbort:
 		fmt.Fprintf(c.ErrOrStderr(),
 			"sync: drift detected (ahead=%d, behind=%d); aborting per --strategy=abort\n", ahead, behind)
 		os.Exit(exitDrift)
 	case stratAuto:
 		if ahead == 0 {
-			return repo.PullFastForward(ctx)
+			return false, repo.PullFastForward(ctx)
 		}
 		if !isTTY() {
 			fmt.Fprintf(c.ErrOrStderr(),
@@ -384,18 +400,18 @@ func resolveDrift(c *cobra.Command, repo *vcs.Repo, ctx context.Context, strateg
 		r := bufio.NewReader(os.Stdin)
 		line, err := r.ReadString('\n')
 		if err != nil {
-			return err
+			return false, err
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "l", "local":
-			return repo.PushForce(ctx)
+			err := repo.PushForce(ctx)
+			return err == nil, err
 		case "r", "remote":
-			return repo.PullKeepRemote(ctx)
+			return false, repo.PullKeepRemote(ctx)
 		default:
 			fmt.Fprintln(c.ErrOrStderr(), "sync: aborted")
 			os.Exit(exitDrift)
 		}
 	}
-	return nil
+	return false, nil
 }
-

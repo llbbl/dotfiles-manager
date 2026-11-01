@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -179,6 +180,227 @@ func runSync(ctx context.Context, cfg *config.Config) error {
 	return cmd.Execute()
 }
 
+func TestSync_FailedPush_UnchangedRetryPushesPendingCommits(t *testing.T) {
+	requireGit(t)
+	for _, upstream := range []bool{false, true} {
+		for _, asJSON := range []bool{false, true} {
+			name := "first-push"
+			if upstream {
+				name = "existing-origin"
+			}
+			if asJSON {
+				name += "-json"
+			}
+			t.Run(name, func(t *testing.T) {
+				remote := newBareRemote(t)
+				home := t.TempDir()
+				env := newTestEnv(t, WithHome(home), WithRepoRemote(remote),
+					WithRepoLocal(filepath.Join(t.TempDir(), "backup")))
+				ctx, cancel := context.WithTimeout(env.Ctx, 60*time.Second)
+				defer cancel()
+				repo, err := vcs.InitLocal(ctx, env.Cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if upstream {
+					if err := repo.WriteFile("README.md", []byte("# backup\n")); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := repo.CommitAll(ctx, "init"); err != nil {
+						t.Fatal(err)
+					}
+					if err := repo.Push(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				path := filepath.Join(home, ".zshrc")
+				if err := os.WriteFile(path, []byte("# fixture\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				canonical, display, err := tracker.Resolve(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := tracker.Track(ctx, env.Store, canonical, display,
+					tracker.TrackOptions{SkipSecretCheck: true}); err != nil {
+					t.Fatal(err)
+				}
+
+				rejectHook := filepath.Join(remote, "hooks", "pre-receive")
+				if err := os.WriteFile(rejectHook, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				run := func(args ...string) (string, error) {
+					t.Helper()
+					cmd := newSyncCmd()
+					var out, stderr bytes.Buffer
+					cmd.SetOut(&out)
+					cmd.SetErr(&stderr)
+					cmd.SetContext(config.WithContext(ctx, env.Cfg))
+					cmd.SetArgs(args)
+					err := cmd.Execute()
+					return out.String(), err
+				}
+				if _, err := run(); err == nil {
+					t.Fatal("expected rejected push")
+				}
+				pendingSHA := syncGit(t, repo.Path(), "rev-parse", "HEAD")
+				if status := syncGit(t, repo.Path(), "status", "--porcelain"); status != "" {
+					t.Fatalf("failed push left uncommitted files: %q", status)
+				}
+				assertRemotePending := func() {
+					t.Helper()
+					cmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/main")
+					cmd.Dir = remote
+					out, err := cmd.Output()
+					if upstream && err != nil {
+						t.Fatalf("read remote ref: %v", err)
+					}
+					if !upstream && err == nil {
+						t.Fatal("failed first push created a remote branch")
+					}
+					if strings.TrimSpace(string(out)) == pendingSHA {
+						t.Fatal("pending commit unexpectedly reached remote")
+					}
+				}
+				assertRemotePending()
+
+				var beforeSnapshots int
+				if err := env.Store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM snapshots").Scan(&beforeSnapshots); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := run("--dry-run", "--json"); err != nil {
+					t.Fatalf("dry-run: %v", err)
+				}
+				assertRemotePending()
+				var afterSnapshots int
+				if err := env.Store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM snapshots").Scan(&afterSnapshots); err != nil {
+					t.Fatal(err)
+				}
+				if afterSnapshots != beforeSnapshots || syncGit(t, repo.Path(), "rev-parse", "HEAD") != pendingSHA ||
+					syncGit(t, repo.Path(), "status", "--porcelain") != "" {
+					t.Fatal("dry-run changed local state")
+				}
+
+				if err := os.Remove(rejectHook); err != nil {
+					t.Fatal(err)
+				}
+				var args []string
+				if asJSON {
+					args = []string{"--json"}
+				}
+				out, err := run(args...)
+				if err != nil {
+					t.Fatalf("retry: %v", err)
+				}
+				if remoteSHA := syncGit(t, remote, "rev-parse", "refs/heads/main"); remoteSHA != pendingSHA {
+					t.Fatalf("remote ref = %s, want pending commit %s", remoteSHA, pendingSHA)
+				}
+				if localSHA := syncGit(t, repo.Path(), "rev-parse", "HEAD"); localSHA != pendingSHA {
+					t.Fatal("unchanged retry created a new commit")
+				}
+				if asJSON {
+					assertSyncSummary(t, out, true)
+				} else if !strings.Contains(out, "pushed pending commits to origin/main (no new commit)") ||
+					strings.Contains(out, "no changes") {
+					t.Fatalf("retry output = %q", out)
+				}
+
+				// A clean, fully synced run must not attempt another push.
+				prePush := filepath.Join(repo.Path(), ".git", "hooks", "pre-push")
+				if err := os.WriteFile(prePush, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				out, err = run("--json")
+				if err != nil {
+					t.Fatalf("clean no-op: %v", err)
+				}
+				assertSyncSummary(t, out, false)
+			})
+		}
+	}
+}
+
+func syncGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fixture git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestSync_KeepLocalReportsSuccessfulPush(t *testing.T) {
+	requireGit(t)
+	remote := newBareRemote(t)
+	env := newTestEnv(t, WithRepoRemote(remote),
+		WithRepoLocal(filepath.Join(t.TempDir(), "backup")))
+	ctx, cancel := context.WithTimeout(env.Ctx, 60*time.Second)
+	defer cancel()
+	repo, err := vcs.InitLocal(ctx, env.Cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteFile("README.md", []byte("# initial\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CommitAll(ctx, "init"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	otherCfg := &config.Config{Repo: config.RepoConfig{
+		Remote: remote, Local: filepath.Join(t.TempDir(), "other"),
+	}}
+	other, err := vcs.Clone(ctx, otherCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []*vcs.Repo{repo, other} {
+		if err := r.WriteFile("README.md", []byte(r.Path()+"\n")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.CommitAll(ctx, "diverge"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := other.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newSyncCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetContext(config.WithContext(ctx, env.Cfg))
+	cmd.SetArgs([]string{"--strategy=keep-local", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	assertSyncSummary(t, out.String(), true)
+	if syncGit(t, remote, "rev-parse", "refs/heads/main") != syncGit(t, repo.Path(), "rev-parse", "HEAD") {
+		t.Fatal("keep-local did not push the local branch")
+	}
+}
+
+func assertSyncSummary(t *testing.T, out string, pushed bool) {
+	t.Helper()
+	var summary struct {
+		Empty   bool   `json:"empty"`
+		Pushed  bool   `json:"pushed"`
+		Changes int    `json:"changes"`
+		Commit  string `json:"commit"`
+		Branch  string `json:"branch"`
+	}
+	if err := json.Unmarshal([]byte(out), &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if !summary.Empty || summary.Pushed != pushed || summary.Changes != 0 || summary.Commit != "" || summary.Branch != "main" {
+		t.Fatalf("summary = %+v, want empty=true pushed=%v changes=0 commit=empty branch=main", summary, pushed)
+	}
+}
+
 func TestSanitizeBackupPath(t *testing.T) {
 	home := "/home/u"
 	cases := []struct {
@@ -218,6 +440,3 @@ func TestParseOwnerName(t *testing.T) {
 		}
 	}
 }
-
-// Silence unused warnings for diagnostic helpers.
-var _ = json.Marshal

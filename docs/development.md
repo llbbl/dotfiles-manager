@@ -4,8 +4,10 @@
 
 Required tool versions are pinned in [`mise.toml`](../mise.toml):
 
-- Go 1.25.14
+- Go 1.26.10
 - just 1.46.0
+- golangci-lint 2.13.2
+- govulncheck 1.8.0
 
 Install [mise](https://mise.jdx.dev/) and run:
 
@@ -13,7 +15,7 @@ Install [mise](https://mise.jdx.dev/) and run:
 mise install
 ```
 
-If you don't use mise, install Go and just manually at the pinned versions.
+If you don't use mise, install these tools manually at the pinned versions.
 
 ## Common just recipes
 
