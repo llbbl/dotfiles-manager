@@ -298,6 +298,10 @@ func TestImport_FailureMidRunLeavesTargetUnchanged(t *testing.T) {
 	if got := dumpAll(t, dst); !reflect.DeepEqual(got, before) {
 		t.Fatalf("target changed after failed import:\n%v\nwant\n%v", got, before)
 	}
+	// A failed import that never rolls back keeps the write lock, so this write would hit busy.
+	if _, err := dst.Exec(`DROP TRIGGER fail_snap_b`); err != nil {
+		t.Fatalf("target still locked after failed import: %v", err)
+	}
 }
 
 func TestImport_ReimportIsIdempotent(t *testing.T) {
