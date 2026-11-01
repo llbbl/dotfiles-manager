@@ -83,18 +83,6 @@ func (e *SecretsError) Error() string {
 	return fmt.Sprintf("secrets detected in %s (%d findings)", e.Path, len(e.Result.Findings))
 }
 
-// BinarySuffixError is returned when a path matches a binary-ish suffix
-// and TrackOptions.SkipSecretCheck (the --force flag) is not set.
-type BinarySuffixError struct {
-	Path   string
-	Suffix string
-}
-
-// Error implements the error interface.
-func (e *BinarySuffixError) Error() string {
-	return fmt.Sprintf("refusing %s: suspicious suffix %q (use --force to override)", e.Path, e.Suffix)
-}
-
 // systemRoots are filesystem roots we refuse to track from regardless of
 // the user's request. Anything that canonicalizes under one of these is
 // rejected before any DB write.
@@ -457,12 +445,12 @@ type scanner interface {
 
 func scanFile(s scanner) (File, error) {
 	var (
-		id          int64
-		path        string
-		display     string
-		addedAt     string
-		lastHash    string
-		lastSynced  string
+		id         int64
+		path       string
+		display    string
+		addedAt    string
+		lastHash   string
+		lastSynced string
 	)
 	if err := s.Scan(&id, &path, &display, &addedAt, &lastHash, &lastSynced); err != nil {
 		return File{}, fmt.Errorf("scan tracked_files: %w", err)
