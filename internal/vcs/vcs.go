@@ -158,13 +158,6 @@ func cleanRelativePath(rel string) (string, error) {
 	return cleaned, nil
 }
 
-// Add stages paths.
-func (r *Repo) Add(paths ...string) error {
-	args := append([]string{"add"}, paths...)
-	_, _, err := runGit(context.Background(), r.path, args...)
-	return err
-}
-
 // CommitAll stages all changes and creates a commit. No-op if clean.
 func (r *Repo) CommitAll(ctx context.Context, message string) (CommitResult, error) {
 	if _, _, err := runGit(ctx, r.path, "add", "-A"); err != nil {

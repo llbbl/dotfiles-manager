@@ -19,22 +19,16 @@ import (
 	turso "turso.tech/database/tursogo"
 )
 
-// Store is a handle around an open *sql.DB plus the connection target
-// (a filesystem path or remote URL) used to open it.
+// Store is a handle around an open *sql.DB.
 type Store struct {
-	db     *sql.DB
-	target string
+	db *sql.DB
 	// shared marks this Store as a non-owning reference: Close is a
 	// no-op. See SharedRef.
 	shared bool
 }
 
 // DB returns the underlying *sql.DB.
-func (s *Store) DB() *sql.DB     { return s.db }
-
-// Target returns the connection string the Store was opened against (a
-// local path or a remote URL).
-func (s *Store) Target() string  { return s.target }
+func (s *Store) DB() *sql.DB { return s.db }
 
 // Close closes the underlying *sql.DB. If this Store is a shared
 // reference (constructed via SharedRef), Close is a no-op — the
@@ -52,7 +46,7 @@ func (s *Store) Close() error {
 // the root cobra command to share its store with subcommands so we
 // only open the DB (and run migrations) once per process.
 func (s *Store) SharedRef() *Store {
-	return &Store{db: s.db, target: s.target, shared: true}
+	return &Store{db: s.db, shared: true}
 }
 
 // New opens the state DB, pings it, and runs pending migrations.
@@ -70,7 +64,7 @@ func New(ctx context.Context, cfg *config.Config) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{db: db, target: target}, nil
+	return &Store{db: db}, nil
 }
 
 // Open opens the state DB without running migrations. Used by the migrate

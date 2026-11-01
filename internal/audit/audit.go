@@ -41,7 +41,6 @@ type Logger struct {
 	mu      sync.Mutex
 	file    *os.File
 	store   *store.Store
-	path    string
 	backend string
 	closed  bool
 }
@@ -91,16 +90,11 @@ func New(ctx context.Context, cfg *config.Config, s *store.Store) (*Logger, erro
 			return nil, fmt.Errorf("audit: open log: %w", err)
 		}
 		l.file = f
-		l.path = path
 		return l, nil
 	default:
 		return nil, fmt.Errorf("audit: unknown backend %q", backend)
 	}
 }
-
-// Path returns the JSONL file path (empty when the backend does not
-// write to a file).
-func (l *Logger) Path() string { return l.path }
 
 // Log appends a JSONL record and/or inserts a row into libSQL according
 // to the configured backend. Reserved keys ts and action overwrite any

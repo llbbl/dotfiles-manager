@@ -1,7 +1,7 @@
 // Package snapshot provides the pre-modification backup system. Blobs
 // are written under cfg.Dir, deduplicated by SHA-256 content hash, with
 // row-per-snapshot metadata recorded in the snapshots table. The
-// Manager exposes Snapshot/List/Get/Restore/Open and a retention+size
+// Manager exposes Snapshot/List/Get/Restore and a retention+size
 // driven Prune.
 package snapshot
 
@@ -15,7 +15,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -346,20 +345,6 @@ func writeTempFile(dest string, data []byte, mode os.FileMode) (string, error) {
 	}
 	ready = true
 	return name, nil
-}
-
-// Open returns an io.ReadCloser over the blob bytes for the given ID.
-func (m *Manager) Open(ctx context.Context, id string) (io.ReadCloser, error) {
-	snap, err := m.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := os.Stat(snap.StoragePath); errors.Is(err, os.ErrNotExist) {
-		return nil, ErrBlobMissing
-	} else if err != nil {
-		return nil, err
-	}
-	return os.Open(snap.StoragePath)
 }
 
 // readBlob reads and verifies the blob for a snapshot.
