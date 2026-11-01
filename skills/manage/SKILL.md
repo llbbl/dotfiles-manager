@@ -77,6 +77,13 @@ switches backends sees an empty snapshot list and concludes their history is gon
 It is not — it is sitting in the other backend. Check which one is active
 (`[state].url` in the config file) before diagnosing anything as missing data.
 
+`dfm state import --from <url> --dry-run` previews copying rows into the active
+store. Apply only after reviewing that preview, with interactive confirmation or
+`--yes`. The default tables are `tracked_files,snapshots`; existing rows are
+skipped unless `--replace` is passed, and snapshots with unavailable local blobs
+are skipped. Remote source URLs are reduced to `scheme://host` in prompts,
+errors, and logs; source-open errors omit potentially sensitive driver details.
+
 ### Destructive commands have a fixed contract
 
 Preview, then default-no confirmation, `--yes` to proceed, `--dry-run` to stop
@@ -254,6 +261,11 @@ Mirrors tracked files into the private backup repo, snapshots each, appends to t
 audit log, commits, and pushes. On divergence with the remote, `--strategy` decides;
 a non-TTY with divergence and no explicit strategy exits 6.
 
+After a push failure, rerunning `dfm sync` pushes the pending local commits even
+if no files changed. An already synced repo does not push. With `--json`, `empty`
+means no new commit was created, and `pushed` reports a successful push in this
+run; a retry can return `empty: true` and `pushed: true`. `--dry-run` never pushes.
+
 ### Review an AI suggestion
 
 ```sh
@@ -265,6 +277,11 @@ dfm apply <id>      # or: dfm reject <id>
 Suggestions are diffs, not applied changes. Show the user the diff and let them
 decide — do not auto-apply. `apply` snapshots before writing, and on failure leaves
 the file untouched and the suggestion `pending`.
+
+Patches must cover one file, with numbered hunk counts matching the body. Changes
+to lines beginning `-- ` or `++ ` are supported. If a legacy bare `@@` patch is
+refused because a header-like line pair could introduce another file, request a
+patch with numbered hunk ranges.
 
 ## What not to do
 

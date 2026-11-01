@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +45,54 @@ func TestAsk_EmptyResultIsError(t *testing.T) {
 	a := newTestAdapter(runner)
 	if _, err := a.Ask(context.Background(), "ping"); !errors.Is(err, ErrEmptyResponse) {
 		t.Fatalf("want ErrEmptyResponse, got %v", err)
+	}
+}
+
+func TestAsk_InvalidResponse_DoesNotExposeContent(t *testing.T) {
+	const marker = "synthetic-private-response-marker"
+	for _, tt := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "invalid JSON", raw: marker + " {"},
+		{name: "JSON string", raw: `"` + marker + `"`},
+		{name: "missing result", raw: `{"unrelated":"` + marker + `"}`},
+		{name: "empty result", raw: `{"result":" ","metadata":"` + marker + `"}`},
+		{name: "wrong result type", raw: `{"result":{"private":"` + marker + `"}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newTestAdapter(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+				return []byte(tt.raw), nil
+			})
+			res, err := a.Ask(context.Background(), "safe prompt")
+			if !errors.Is(err, ErrEmptyResponse) {
+				t.Fatal("expected ErrEmptyResponse")
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Fatal("error exposed provider response content")
+			}
+			if res.Text != "" {
+				t.Fatal("failed response returned provider content")
+			}
+		})
+	}
+}
+
+func TestAsk_FailedCLI_DoesNotExposeOutput(t *testing.T) {
+	const marker = "synthetic-private-process-output-marker"
+	bin := filepath.Join(t.TempDir(), "provider")
+	script := "#!/bin/sh\nprintf '%s\\n' '" + marker + "'\nprintf '%s\\n' '" + marker + "' >&2\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.AI.ClaudeCode.Bin = bin
+	_, err := New(cfg).Ask(context.Background(), "safe prompt")
+	if err == nil {
+		t.Fatal("expected failed process error")
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Fatal("error exposed provider process output")
 	}
 }
 
@@ -90,6 +140,34 @@ this is not a diff at all
 	})
 	if !errors.Is(err, ErrMalformedDiff) {
 		t.Fatalf("want ErrMalformedDiff, got %v", err)
+	}
+}
+
+func TestSuggest_MalformedResponse_DoesNotExposeContent(t *testing.T) {
+	const marker = "synthetic-private-diff-marker"
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing markers", body: marker},
+		{name: "reversed markers", body: "---DIFF---\n" + marker + "\n---SUMMARY---"},
+		{name: "invalid diff", body: "---SUMMARY---\n" + marker + "\n---DIFF---\n" + marker + "\n---END---"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newTestAdapter(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+				return mustJSON(map[string]any{"result": tt.body}), nil
+			})
+			res, err := a.Suggest(context.Background(), SuggestInput{})
+			if !errors.Is(err, ErrMalformedDiff) {
+				t.Fatal("expected ErrMalformedDiff")
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Fatal("error exposed provider response or diff content")
+			}
+			if res.Prompt != "" || res.Summary != "" || res.Diff != "" {
+				t.Fatal("failed suggestion returned prompt or response content")
+			}
+		})
 	}
 }
 

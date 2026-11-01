@@ -128,25 +128,28 @@ func (m *Manager) Snapshot(ctx context.Context, path string, file *tracker.File,
 		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 			return Snapshot{}, fmt.Errorf("mkdir blob dir: %w", err)
 		}
-		tmp := dest + ".tmp"
-		if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		tmp, err := writeTempFile(dest, data, 0o600)
+		if err != nil {
 			return Snapshot{}, fmt.Errorf("write blob: %w", err)
 		}
+		defer func() {
+			if tmp != "" {
+				_ = os.Remove(tmp)
+			}
+		}()
 		// Verify content hash after write.
 		verify, verr := os.ReadFile(tmp)
 		if verr != nil {
-			_ = os.Remove(tmp)
 			return Snapshot{}, fmt.Errorf("verify read: %w", verr)
 		}
 		vsum := sha256.Sum256(verify)
 		if hex.EncodeToString(vsum[:]) != hash {
-			_ = os.Remove(tmp)
 			return Snapshot{}, ErrChecksumMismatch
 		}
 		if err := os.Rename(tmp, dest); err != nil {
-			_ = os.Remove(tmp)
 			return Snapshot{}, fmt.Errorf("rename blob: %w", err)
 		}
+		tmp = ""
 	} else if err != nil {
 		return Snapshot{}, fmt.Errorf("stat blob: %w", err)
 	}
@@ -293,20 +296,56 @@ func (m *Manager) Restore(ctx context.Context, id, dest string, opts RestoreOpti
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", 0, fmt.Errorf("mkdir dest dir: %w", err)
 	}
-	tmp := dest + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	tmp, err := writeTempFile(dest, data, mode)
+	if err != nil {
 		return "", 0, fmt.Errorf("write dest: %w", err)
 	}
+	defer func() {
+		if tmp != "" {
+			_ = os.Remove(tmp)
+		}
+	}()
 	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
 		return "", 0, fmt.Errorf("rename dest: %w", err)
 	}
+	tmp = ""
 	audit.Log(ctx, "snapshot.restored", map[string]any{
 		"id":   snap.ID,
 		"dest": dest,
 		"size": int64(len(data)),
 	})
 	return dest, int64(len(data)), nil
+}
+
+// writeTempFile creates an exclusively owned sibling of dest. The caller must
+// remove the returned path after using it, including when a later rename fails.
+func writeTempFile(dest string, data []byte, mode os.FileMode) (string, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("create temporary file: %w", err)
+	}
+	name := tmp.Name()
+	ready := false
+	defer func() {
+		if !ready {
+			_ = tmp.Close()
+			_ = os.Remove(name)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return "", fmt.Errorf("write temporary file: %w", err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		return "", fmt.Errorf("chmod temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("sync temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close temporary file: %w", err)
+	}
+	ready = true
+	return name, nil
 }
 
 // Open returns an io.ReadCloser over the blob bytes for the given ID.

@@ -149,7 +149,9 @@ func parseResult(raw []byte) (string, error) {
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(trim), &obj); err != nil {
-		return "", fmt.Errorf("%w: %s", ErrEmptyResponse, excerpt(trim))
+		// Provider output may contain private file contents. Keep parsing
+		// diagnostics structural instead of including output or decoder errors.
+		return "", fmt.Errorf("%w: expected a JSON object", ErrEmptyResponse)
 	}
 	keys := []string{"result", "response", "text", "content"}
 	for _, k := range keys {
@@ -160,7 +162,7 @@ func parseResult(raw []byte) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("%w: %s", ErrEmptyResponse, excerpt(trim))
+	return "", fmt.Errorf("%w: no non-empty response field", ErrEmptyResponse)
 }
 
 // splitSuggestResponse extracts the summary and diff sections produced
@@ -174,7 +176,7 @@ func splitSuggestResponse(text string) (summary, diff string, err error) {
 	iSum := strings.Index(text, markSummary)
 	iDiff := strings.Index(text, markDiff)
 	if iSum < 0 || iDiff < 0 || iDiff <= iSum {
-		return "", "", fmt.Errorf("%w: missing markers: %s", ErrMalformedDiff, excerpt(text))
+		return "", "", fmt.Errorf("%w: missing or out-of-order section markers", ErrMalformedDiff)
 	}
 	summary = strings.TrimSpace(text[iSum+len(markSummary) : iDiff])
 
@@ -188,7 +190,7 @@ func splitSuggestResponse(text string) (summary, diff string, err error) {
 	diff = stripFences(diff)
 
 	if !looksLikeUnifiedDiff(diff) {
-		return "", "", fmt.Errorf("%w: %s", ErrMalformedDiff, excerpt(diff))
+		return "", "", fmt.Errorf("%w: expected unified diff headers", ErrMalformedDiff)
 	}
 	return summary, diff, nil
 }
@@ -209,15 +211,6 @@ func stripFences(s string) string {
 func looksLikeUnifiedDiff(s string) bool {
 	t := strings.TrimSpace(s)
 	return strings.HasPrefix(t, "--- a/") || strings.HasPrefix(t, "diff --git ")
-}
-
-func excerpt(s string) string {
-	const max = 256
-	s = strings.TrimSpace(s)
-	if len(s) > max {
-		return s[:max] + "..."
-	}
-	return s
 }
 
 func renderSuggestPrompt(in SuggestInput) string {

@@ -74,6 +74,124 @@ func TestValidate_MultiFileRejected(t *testing.T) {
 	}
 }
 
+func TestParse_HeaderLikeHunkContentApplies(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header string
+		parse  func(string) (FileSet, error)
+	}{
+		{"strict", "@@ -1 +1 @@", Parse},
+		{"tolerant numbered", "@@ -1 +1 @@", ParseTolerant},
+		{"tolerant bare", "@@", ParseTolerant},
+		{"tolerant bare pair", "@@ @@", ParseTolerant},
+	} {
+		for _, sep := range []string{"\n", "\r\n"} {
+			ending := "LF"
+			if sep == "\r\n" {
+				ending = "CRLF"
+			}
+			t.Run(tc.name+"/"+ending, func(t *testing.T) {
+				diff := strings.Join([]string{"--- a/x", "+++ b/x", tc.header, "--- old", "+++ new", ""}, sep)
+				fs, err := tc.parse(diff)
+				if err != nil {
+					t.Fatalf("parse header-like hunk: %v", err)
+				}
+				orig := []byte("-- old" + sep)
+				if err := ResolveSentinelHunks(&fs, orig); err != nil {
+					t.Fatalf("resolve: %v", err)
+				}
+				out, hunks, err := ApplyToBytes(orig, fs)
+				if err != nil {
+					t.Fatalf("apply: %v", err)
+				}
+				if string(out) != "++ new"+sep || hunks != 1 {
+					t.Fatalf("got %q (%d hunks), want replacement", out, hunks)
+				}
+			})
+		}
+	}
+}
+
+func TestParse_HeaderLikeContentWithZeroCountRanges(t *testing.T) {
+	for _, tc := range []struct {
+		name, header, body string
+		kind               byte
+	}{
+		{"insertion", "@@ -0,0 +1 @@", "+++ new", '+'},
+		{"deletion", "@@ -1 +0,0 @@", "--- old", '-'},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, err := Parse("--- a/x\n+++ b/x\n" + tc.header + "\n" + tc.body + "\n\\ No newline at end of file\n")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			line := fs.Hunks[0].Lines[0]
+			if line.Kind != tc.kind || !line.NoNewline {
+				t.Fatalf("unexpected parsed content: %+v", line)
+			}
+		})
+	}
+}
+
+func TestParse_NumberedHeaderLikeContentBeforeNextHunkAccepted(t *testing.T) {
+	diff := "--- a/x\n+++ b/x\n@@ -1 +1 @@\n--- old\n+++ new\n@@ -3 +3 @@\n-before\n+after\n"
+	for _, parse := range []func(string) (FileSet, error){Parse, ParseTolerant} {
+		fs, err := parse(diff)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		out, hunks, err := ApplyToBytes([]byte("-- old\nseparator\nbefore\n"), fs)
+		if err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if string(out) != "++ new\nseparator\nafter\n" || hunks != 2 {
+			t.Fatalf("got %q (%d hunks), want both replacements", out, hunks)
+		}
+	}
+}
+
+func TestParseTolerant_SecondFileAndAmbiguousBareBoundaryRejected(t *testing.T) {
+	for _, header := range []string{"@@", "@@ @@", "@@ -1 +1 @@"} {
+		for _, metadata := range []string{"", "diff --git a/y b/y\nindex 123..456 100644\n"} {
+			diff := "--- a/x\n+++ b/x\n" + header + "\n-a\n+b\n" + metadata +
+				"--- a/y\n+++ b/y\n@@ -1 +1 @@\n-c\n+d\n"
+			if _, err := ParseTolerant(diff); !errors.Is(err, ErrDiffMalformed) {
+				t.Fatalf("want multi-file rejection for %q, got %v", header, err)
+			}
+		}
+	}
+	// Without ranges, this could either be header-like body content followed
+	// by another hunk, or a second file. Fail closed for that ambiguity.
+	diff := "--- a/x\n+++ b/x\n@@\n--- old\n+++ new\n@@\n-before\n+after\n"
+	if _, err := ParseTolerant(diff); !errors.Is(err, ErrDiffMalformed) {
+		t.Fatalf("want ambiguous bare-hunk boundary rejection, got %v", err)
+	}
+}
+
+func TestParse_NumberedHunkCountMismatchRejected(t *testing.T) {
+	for _, body := range []string{"-old\n", "-old\n+new\n+extra\n"} {
+		diff := "--- a/x\n+++ b/x\n@@ -1 +1 @@\n" + body
+		for _, parse := range []func(string) (FileSet, error){Parse, ParseTolerant} {
+			if _, err := parse(diff); !errors.Is(err, ErrDiffMalformed) {
+				t.Fatalf("want mismatched hunk count rejection, got %v", err)
+			}
+		}
+	}
+}
+
+func TestParse_MalformedHunkHeaderDoesNotExposeContent(t *testing.T) {
+	const marker = "synthetic-private-hunk-content"
+	for _, parse := range []func(string) (FileSet, error){Parse, ParseTolerant} {
+		_, err := parse("--- a/x\n+++ b/x\n@@ -" + marker + " +1 @@\n-old\n+new\n")
+		if !errors.Is(err, ErrDiffMalformed) {
+			t.Fatalf("want malformed hunk error, got %v", err)
+		}
+		if strings.Contains(err.Error(), marker) {
+			t.Fatal("malformed hunk error exposed diff content")
+		}
+	}
+}
+
 func TestValidate_Empty(t *testing.T) {
 	if _, err := Validate(""); !errors.Is(err, ErrDiffEmpty) {
 		t.Fatalf("want ErrDiffEmpty, got %v", err)

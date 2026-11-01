@@ -64,7 +64,7 @@ func newStateImportCmd() *cobra.Command {
 			// Same-URL guard.
 			if sameStateURL(fromURL, cfg.State.URL) {
 				return exitf(exitResolveErr,
-					"--from %q resolves to the same DB as the active target; refusing", fromURL)
+					"--from %q resolves to the same DB as the active target; refusing", stateSourceDisplay(fromURL))
 			}
 
 			// Open target (reuse the migrated handle the root cmd
@@ -174,8 +174,47 @@ func openSourceDB(ctx context.Context, fromURL string) (*sql.DB, string, error) 
 	if tok := extractAuthToken(fromURL); tok != "" {
 		srcCfg.State.AuthToken = tok
 	}
-	return store.Open(ctx, srcCfg)
+	db, target, err := store.Open(ctx, srcCfg)
+	if err != nil {
+		// Driver errors can repeat the complete connection URL. Keep the
+		// original error available to errors.Is/As without displaying it.
+		return nil, "", &stateSourceOpenError{source: stateSourceDisplay(fromURL), cause: err}
+	}
+	return db, stateSourceDisplay(target), nil
 }
+
+// stateSourceDisplay preserves local paths and limits remote URLs to their
+// scheme and host. Unlike the configuration display helper, malformed URLs
+// must fail closed because --from can contain credentials in any URL part.
+func stateSourceDisplay(raw string) string {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<redacted URL>"
+	}
+	if u.Scheme == "" && u.Host == "" {
+		return raw
+	}
+	if u.Scheme == "file" && u.User == nil {
+		return "file://" + u.Host + u.Path
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "<redacted URL>"
+	}
+	cfg := &config.Config{State: config.StateConfig{URL: raw}}
+	return cfg.Redacted().State.URL
+}
+
+type stateSourceOpenError struct {
+	source string
+	cause  error
+}
+
+func (e *stateSourceOpenError) Error() string {
+	return fmt.Sprintf("cannot open %q; check the source URL, credentials, and connectivity", e.source)
+}
+
+func (e *stateSourceOpenError) Unwrap() error { return e.cause }
 
 // extractAuthToken pulls authToken from the query string of a URL
 // (case-insensitive on the key). Returns "" if absent or
