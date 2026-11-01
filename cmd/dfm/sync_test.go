@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -168,6 +169,87 @@ func TestSync_FirstRunCommitsAndPushes(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(local, "files", ".zshrc"))
 	if !strings.Contains(string(got), "v2") {
 		t.Errorf("backup not updated, contents = %q", got)
+	}
+}
+
+func TestSync_CheckedOutEscapingSymlink_StopsBeforeCommitOrPush(t *testing.T) {
+	requireGit(t)
+	for _, linkName := range []string{"files", "logs"} {
+		t.Run(linkName, func(t *testing.T) {
+			remote, outside, home := newBareRemote(t), t.TempDir(), t.TempDir()
+			env := newTestEnv(t, WithHome(home), WithRepoRemote(remote),
+				WithRepoLocal(filepath.Join(t.TempDir(), "checkout")))
+			ctx, cancel := context.WithTimeout(env.Ctx, 60*time.Second)
+			defer cancel()
+			seedCfg := &config.Config{Repo: config.RepoConfig{
+				Local: filepath.Join(t.TempDir(), "seed"), Remote: remote,
+			}}
+			seed, err := vcs.InitLocal(ctx, seedCfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(seed.Path(), linkName)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := seed.CommitAll(ctx, "fixture symlink"); err != nil {
+				t.Fatal(err)
+			}
+			if err := seed.Push(ctx); err != nil {
+				t.Fatal(err)
+			}
+			initialSHA := syncGit(t, remote, "rev-parse", "refs/heads/main")
+			repo, err := vcs.Clone(ctx, env.Cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Lstat(filepath.Join(repo.Path(), linkName))
+			if err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("checkout did not retain the fixture symlink: %v", err)
+			}
+			protectedName := ".zshrc"
+			if linkName == "logs" {
+				protectedName = "actions.jsonl"
+			}
+			protected := filepath.Join(outside, protectedName)
+			if err := os.WriteFile(protected, []byte("outside sentinel\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, ".zshrc")
+			if err := os.WriteFile(path, []byte("# tracked fixture\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			canonical, display, err := tracker.Resolve(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tracker.Track(ctx, env.Store, canonical, display,
+				tracker.TrackOptions{SkipSecretCheck: true}); err != nil {
+				t.Fatal(err)
+			}
+			cmd := newSyncCmd()
+			var output bytes.Buffer
+			cmd.SetOut(&output)
+			cmd.SetErr(&output)
+			cmd.SetContext(config.WithContext(ctx, env.Cfg))
+			cmd.SetArgs([]string{})
+			err = cmd.Execute()
+			var pathErr *os.PathError
+			if !errors.As(err, &pathErr) {
+				t.Errorf("sync error = %v, want filesystem path error", err)
+			}
+			if got, err := os.ReadFile(protected); err != nil || string(got) != "outside sentinel\n" {
+				t.Errorf("sync modified outside target: %q, %v", got, err)
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 1 {
+				t.Errorf("sync created outside files: %v, %v", entries, err)
+			}
+			if syncGit(t, remote, "rev-parse", "refs/heads/main") != initialSHA {
+				t.Error("sync pushed despite escaping backup path")
+			}
+			if syncGit(t, repo.Path(), "rev-parse", "HEAD") != initialSHA {
+				t.Error("sync committed despite escaping backup path")
+			}
+		})
 	}
 }
 

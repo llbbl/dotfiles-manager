@@ -103,37 +103,51 @@ func InitLocal(ctx context.Context, cfg *config.Config) (*Repo, error) {
 	return r, nil
 }
 
-// WriteFile writes data to <repo>/<relPath>, mkdir -p as needed.
+// WriteFile writes data beneath the backup repo, mkdir -p as needed.
 func (r *Repo) WriteFile(relPath string, data []byte) error {
-	abs, err := r.safeJoin(relPath)
+	rel, err := cleanRelativePath(relPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+	root, err := os.OpenRoot(r.path)
+	if err != nil {
+		return fmt.Errorf("open backup repo: %w", err)
+	}
+	// Closing a read-only directory handle cannot affect completed file writes.
+	defer func() { _ = root.Close() }()
+	// Use the same root handle for mkdir and write: on our Darwin/Linux release
+	// targets, path resolution remains confined even if symlinks change in use.
+	if err := root.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	return os.WriteFile(abs, data, 0o644)
+	return root.WriteFile(rel, data, 0o644)
 }
 
-// AppendFile appends data to <repo>/<relPath>.
+// AppendFile appends data beneath the backup repo.
 func (r *Repo) AppendFile(relPath string, data []byte) error {
-	abs, err := r.safeJoin(relPath)
+	rel, err := cleanRelativePath(relPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+	root, err := os.OpenRoot(r.path)
+	if err != nil {
+		return fmt.Errorf("open backup repo: %w", err)
+	}
+	// Only the directory handle is closed here; file write/close errors below
+	// are both returned to the caller.
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	f, err := os.OpenFile(abs, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := root.OpenFile(rel, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.Write(data)
-	return err
+	_, writeErr := f.Write(data)
+	return errors.Join(writeErr, f.Close())
 }
 
-func (r *Repo) safeJoin(rel string) (string, error) {
+func cleanRelativePath(rel string) (string, error) {
 	cleaned := filepath.Clean(rel)
 	if filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("%w: %s", ErrPathEscape, rel)
@@ -141,7 +155,7 @@ func (r *Repo) safeJoin(rel string) (string, error) {
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%w: %s", ErrPathEscape, rel)
 	}
-	return filepath.Join(r.path, cleaned), nil
+	return cleaned, nil
 }
 
 // Add stages paths.
