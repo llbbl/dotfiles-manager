@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
@@ -123,11 +124,33 @@ func open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
 	if err := ensureParentDir(path); err != nil {
 		return nil, "", err
 	}
-	db, err := sql.Open("turso", path)
+	connector, err := turso.NewConnector(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("open %s: %w", path, err)
 	}
-	return db, path, nil
+	return sql.OpenDB(fkConnector{connector}), path, nil
+}
+
+// fkConnector enables foreign keys on each new pooled connection: the pragma
+// is per-connection, off by default in turso, and tursogo has no DSN option
+// for it. The remote sync connector is unexported, so remote mode can't be wrapped.
+type fkConnector struct{ driver.Connector }
+
+func (c fkConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Connector.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ex, ok := conn.(driver.ExecerContext)
+	if !ok {
+		_ = conn.Close()
+		return nil, errors.New("enable foreign keys: driver connection cannot exec")
+	}
+	if _, err := ex.ExecContext(ctx, "PRAGMA foreign_keys = ON", nil); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+	return conn, nil
 }
 
 func isRemote(u string) bool {

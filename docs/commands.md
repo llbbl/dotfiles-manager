@@ -25,7 +25,7 @@ Stop managing a file. Accepts canonical, `~`-prefixed, or relative path forms.
 
 ### `dfm list`
 
-List tracked files. `--json` for machine-readable output. The table shows the display path, hash prefix, and timestamps.
+List tracked files. `--json` for machine-readable output. The table shows the display path, hash prefix, and timestamps. Tracked-file ids (`id` here, `file_id` in other `--json` output and audit records) are opaque strings; do not parse them or treat them as numbers.
 
 ### `dfm status [<path>]`
 

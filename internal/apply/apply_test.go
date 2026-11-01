@@ -37,7 +37,7 @@ func setupApplyEnv(t *testing.T) (context.Context, *store.Store, *snapshot.Manag
 	return ctx, s, mgr
 }
 
-func insertSuggestion(t *testing.T, ctx context.Context, s *store.Store, fileID int64, diff string) string {
+func insertSuggestion(t *testing.T, ctx context.Context, s *store.Store, fileID, diff string) string {
 	t.Helper()
 	id, err := ids.New()
 	if err != nil {
@@ -236,14 +236,14 @@ func TestRepo_List_FiltersStatus(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 
-	pending, err := repo.List(ctx, 0, StatusPending)
+	pending, err := repo.List(ctx, "", StatusPending)
 	if err != nil {
 		t.Fatalf("list pending: %v", err)
 	}
 	if len(pending) != 1 || pending[0].ID != id2 {
 		t.Errorf("pending = %+v", pending)
 	}
-	all, _ := repo.List(ctx, 0, "")
+	all, _ := repo.List(ctx, "", "")
 	if len(all) != 2 {
 		t.Errorf("all = %d, want 2", len(all))
 	}
@@ -278,7 +278,7 @@ func TestRepo_PrefixResolution(t *testing.T) {
 		t.Fatalf("ResolveFile(prefix): %v", err)
 	}
 	if got.ID != file.ID {
-		t.Errorf("ResolveFile(prefix).ID = %d, want %d", got.ID, file.ID)
+		t.Errorf("ResolveFile(prefix).ID = %s, want %s", got.ID, file.ID)
 	}
 
 	if err := repo.Reject(ctx, prefix); err != nil {

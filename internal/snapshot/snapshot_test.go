@@ -445,13 +445,13 @@ func TestSnapshot_LinksFileID(t *testing.T) {
 	writeFile(t, p, "linked\n")
 
 	// Insert a tracked_files row manually.
-	res, err := s.DB().ExecContext(ctx,
-		`INSERT INTO tracked_files (path, display_path, added_at, last_hash) VALUES (?, ?, ?, ?)`,
+	_, err := s.DB().ExecContext(ctx,
+		`INSERT INTO tracked_files (id, path, display_path, added_at, last_hash) VALUES ('file-1', ?, ?, ?, ?)`,
 		p, p, time.Now().UTC().Format(time.RFC3339), "deadbeef")
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _ := res.LastInsertId()
+	id := "file-1"
 	file := &tracker.File{ID: id, Path: p}
 
 	snap, err := mgr.Snapshot(ctx, p, file, ReasonTrack)
@@ -459,6 +459,6 @@ func TestSnapshot_LinksFileID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snap.FileID == nil || *snap.FileID != id {
-		t.Errorf("FileID = %v, want %d", snap.FileID, id)
+		t.Errorf("FileID = %v, want %s", snap.FileID, id)
 	}
 }

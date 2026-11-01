@@ -58,8 +58,8 @@ func TestNew_EmbeddedFile_RunsMigrationsAndIsAlive(t *testing.T) {
 	}
 
 	_, err = s.DB().ExecContext(ctx,
-		`INSERT INTO tracked_files (path, display_path, added_at) VALUES (?, ?, ?)`,
-		"/abs/path/.zshrc", "~/.zshrc", time.Now().UTC().Format(time.RFC3339))
+		`INSERT INTO tracked_files (id, path, display_path, added_at) VALUES (?, ?, ?, ?)`,
+		"file-1", "/abs/path/.zshrc", "~/.zshrc", time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}

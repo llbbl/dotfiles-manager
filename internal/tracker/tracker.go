@@ -16,13 +16,14 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
+	"github.com/llbbl/dotfiles-manager/internal/ids"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 )
 
 // File is one row of the tracked_files table.
 type File struct {
-	ID          int64
+	ID          string
 	Path        string
 	DisplayPath string
 	AddedAt     time.Time
@@ -314,13 +315,15 @@ func Track(ctx context.Context, s *store.Store, canonical, display string, opts 
 		return f, cbErr
 	}
 
-	res, err := s.DB().ExecContext(ctx,
-		`INSERT INTO tracked_files (path, display_path, added_at, last_hash) VALUES (?, ?, ?, ?)`,
-		canonical, display, addedAt, hash)
+	id, err := ids.New()
 	if err != nil {
+		return File{}, fmt.Errorf("tracked file id: %w", err)
+	}
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO tracked_files (id, path, display_path, added_at, last_hash) VALUES (?, ?, ?, ?, ?)`,
+		id, canonical, display, addedAt, hash); err != nil {
 		return File{}, fmt.Errorf("insert tracked_files: %w", err)
 	}
-	id, _ := res.LastInsertId()
 	f := File{
 		ID:          id,
 		Path:        canonical,
@@ -345,8 +348,24 @@ func Untrack(ctx context.Context, s *store.Store, target string) (File, error) {
 	if f == nil {
 		return File{}, ErrNotTracked
 	}
-	if _, err := s.DB().ExecContext(ctx, `DELETE FROM tracked_files WHERE id = ?`, f.ID); err != nil {
-		return File{}, fmt.Errorf("delete tracked_files: %w", err)
+	// Clear history links explicitly: remote (sync) connections can't enable
+	// foreign keys, so ON DELETE SET NULL only fires in local mode.
+	tx, err := s.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return File{}, fmt.Errorf("begin untrack: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, q := range []string{
+		`UPDATE snapshots SET file_id = NULL WHERE file_id = ?`,
+		`UPDATE suggestions SET file_id = NULL WHERE file_id = ?`,
+		`DELETE FROM tracked_files WHERE id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, f.ID); err != nil {
+			return File{}, fmt.Errorf("untrack: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return File{}, fmt.Errorf("commit untrack: %w", err)
 	}
 	return *f, nil
 }
@@ -445,7 +464,7 @@ type scanner interface {
 
 func scanFile(s scanner) (File, error) {
 	var (
-		id         int64
+		id         string
 		path       string
 		display    string
 		addedAt    string

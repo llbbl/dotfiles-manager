@@ -25,7 +25,7 @@ func openTempDB(t *testing.T) *store.Store {
 	return s
 }
 
-func insertTrackedFile(t *testing.T, db *sql.DB, id int64, path string) {
+func insertTrackedFile(t *testing.T, db *sql.DB, id, path string) {
 	t.Helper()
 	_, err := db.Exec(
 		`INSERT INTO tracked_files (id, path, display_path, added_at)
@@ -88,8 +88,8 @@ func TestImport_BasicCopy(t *testing.T) {
 	src := openTempDB(t)
 	dst := openTempDB(t)
 
-	insertTrackedFile(t, src.DB(), 1, "/a")
-	insertTrackedFile(t, src.DB(), 2, "/b")
+	insertTrackedFile(t, src.DB(), "1", "/a")
+	insertTrackedFile(t, src.DB(), "2", "/b")
 	insertSnapshot(t, src.DB(), "snap-1", "aa")
 
 	res, err := Import(context.Background(), Options{
@@ -114,7 +114,7 @@ func TestImport_BasicCopy(t *testing.T) {
 func TestImport_DryRunNoWrites(t *testing.T) {
 	src := openTempDB(t)
 	dst := openTempDB(t)
-	insertTrackedFile(t, src.DB(), 1, "/a")
+	insertTrackedFile(t, src.DB(), "1", "/a")
 
 	res, err := Import(context.Background(), Options{
 		Source: src.DB(), Target: dst.DB(),
@@ -134,8 +134,8 @@ func TestImport_DryRunNoWrites(t *testing.T) {
 func TestImport_SkipsExistingByDefault(t *testing.T) {
 	src := openTempDB(t)
 	dst := openTempDB(t)
-	insertTrackedFile(t, src.DB(), 1, "/from-src")
-	insertTrackedFile(t, dst.DB(), 1, "/from-dst")
+	insertTrackedFile(t, src.DB(), "1", "/from-src")
+	insertTrackedFile(t, dst.DB(), "1", "/from-dst")
 
 	res, err := Import(context.Background(), Options{
 		Source: src.DB(), Target: dst.DB(),
@@ -160,8 +160,8 @@ func TestImport_SkipsExistingByDefault(t *testing.T) {
 func TestImport_ReplaceOverwrites(t *testing.T) {
 	src := openTempDB(t)
 	dst := openTempDB(t)
-	insertTrackedFile(t, src.DB(), 1, "/from-src")
-	insertTrackedFile(t, dst.DB(), 1, "/from-dst")
+	insertTrackedFile(t, src.DB(), "1", "/from-src")
+	insertTrackedFile(t, dst.DB(), "1", "/from-dst")
 
 	res, err := Import(context.Background(), Options{
 		Source: src.DB(), Target: dst.DB(),

@@ -195,6 +195,49 @@ func TestTrackListUntrack_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestUntrack_WithHistory_NullsFileIDs(t *testing.T) {
+	dir := t.TempDir()
+	withCwd(t, dir)
+	t.Setenv("HOME", dir)
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	p := filepath.Join(dir, "h.txt")
+	writeFile(t, p, "history")
+	canon, disp, err := Resolve(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := Track(ctx, s, canon, disp, TrackOptions{})
+	if err != nil {
+		t.Fatalf("Track: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO snapshots (id, file_id, path, hash, size, reason, created_at, storage_path)
+		 VALUES ('snap-1', ?, ?, 'h', 1, 'manual', '2024-01-01T00:00:00Z', '/b')`, f.ID, canon); err != nil {
+		t.Fatalf("insert snapshot: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO suggestions (id, file_id, provider, prompt, diff, status, created_at)
+		 VALUES ('sug-1', ?, 'p', 'pr', 'd', 'pending', '2024-01-01T00:00:00Z')`, f.ID); err != nil {
+		t.Fatalf("insert suggestion: %v", err)
+	}
+
+	if _, err := Untrack(ctx, s, canon); err != nil {
+		t.Fatalf("Untrack: %v", err)
+	}
+	for _, table := range []string{"snapshots", "suggestions"} {
+		var n int
+		if err := s.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM `+table+` WHERE file_id IS NULL`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("%s: rows with NULL file_id = %d, want 1", table, n)
+		}
+	}
+}
+
 func TestTrack_DuplicateRequiresReset(t *testing.T) {
 	dir := t.TempDir()
 	withCwd(t, dir)
@@ -344,8 +387,8 @@ func TestTrack_TakesInitialSnapshot(t *testing.T) {
 	if calledWith.Path != canon {
 		t.Errorf("AfterCommit path = %q", calledWith.Path)
 	}
-	if calledWith.ID == 0 {
-		t.Errorf("AfterCommit File.ID = 0")
+	if calledWith.ID == "" {
+		t.Errorf("AfterCommit File.ID is empty")
 	}
 }
 

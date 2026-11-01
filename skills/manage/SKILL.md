@@ -95,7 +95,8 @@ Always show the user the `--dry-run` output before running the real thing.
 ### Prefer `--json`
 
 Nearly every listing command takes `--json`. Parse that, not the human table — the
-tables truncate IDs and are formatted for eyes.
+tables truncate IDs and are formatted for eyes. Every ID is an opaque string, including
+tracked-file `id` and `file_id`; never parse one or compare it as a number.
 
 ### Exit codes carry meaning
 

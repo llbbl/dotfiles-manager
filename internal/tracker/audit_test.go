@@ -61,13 +61,13 @@ func TestRecordHashChange_UpdatesRowAndEmitsAudit(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert a row directly so we have a known ID + old hash.
-	res, err := s.DB().ExecContext(ctx,
-		`INSERT INTO tracked_files (path, display_path, added_at, last_hash) VALUES (?, ?, ?, ?)`,
+	_, err := s.DB().ExecContext(ctx,
+		`INSERT INTO tracked_files (id, path, display_path, added_at, last_hash) VALUES ('file-1', ?, ?, ?, ?)`,
 		"/tmp/x", "~/x", time.Now().UTC().Format(time.RFC3339), "oldhash")
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	id, _ := res.LastInsertId()
+	id := "file-1"
 
 	f := File{ID: id, Path: "/tmp/x", DisplayPath: "~/x", LastHash: "oldhash"}
 	err = RecordHashChange(ctx, s, f, "newhash", "snap-1", "edit", map[string]any{
@@ -117,13 +117,13 @@ func TestRecordHashChange_EmptyActionSkipsAudit(t *testing.T) {
 
 	ctx := context.Background()
 
-	res, err := s.DB().ExecContext(ctx,
-		`INSERT INTO tracked_files (path, display_path, added_at, last_hash) VALUES (?, ?, ?, ?)`,
+	_, err := s.DB().ExecContext(ctx,
+		`INSERT INTO tracked_files (id, path, display_path, added_at, last_hash) VALUES ('file-1', ?, ?, ?, ?)`,
 		"/tmp/y", "~/y", time.Now().UTC().Format(time.RFC3339), "h0")
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	id, _ := res.LastInsertId()
+	id := "file-1"
 	f := File{ID: id, Path: "/tmp/y", DisplayPath: "~/y", LastHash: "h0"}
 
 	if err := RecordHashChange(ctx, s, f, "h1", "snap-2", "", nil); err != nil {
@@ -153,13 +153,13 @@ func TestRecordHashChange_ExtraOverridesCanonical(t *testing.T) {
 
 	ctx := context.Background()
 
-	res, err := s.DB().ExecContext(ctx,
-		`INSERT INTO tracked_files (path, display_path, added_at, last_hash) VALUES (?, ?, ?, ?)`,
+	_, err := s.DB().ExecContext(ctx,
+		`INSERT INTO tracked_files (id, path, display_path, added_at, last_hash) VALUES ('file-1', ?, ?, ?, ?)`,
 		"/tmp/z", "~/z", time.Now().UTC().Format(time.RFC3339), "h0")
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	id, _ := res.LastInsertId()
+	id := "file-1"
 	f := File{ID: id, Path: "/tmp/z", DisplayPath: "~/z", LastHash: "h0"}
 
 	err = RecordHashChange(ctx, s, f, "h1", "snap-3", "edit", map[string]any{

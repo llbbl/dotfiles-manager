@@ -42,7 +42,7 @@ const (
 // Snapshot describes one stored backup.
 type Snapshot struct {
 	ID          string
-	FileID      *int64
+	FileID      *string
 	Path        string
 	Hash        string
 	Size        int64
@@ -160,7 +160,7 @@ func (m *Manager) Snapshot(ctx context.Context, path string, file *tracker.File,
 	now := time.Now().UTC()
 	createdAt := now.Format(time.RFC3339Nano)
 
-	var fileID *int64
+	var fileID *string
 	if file != nil {
 		fid := file.ID
 		fileID = &fid
@@ -385,12 +385,12 @@ func (m *Manager) prune(ctx context.Context, dryRun bool) (int, int64, error) {
 	// "Most recent per path" key combines path + file_id (nil-safe).
 	type key struct {
 		path   string
-		fileID int64
+		fileID string
 	}
 	keep := map[string]bool{}
 	latestPerKey := map[key]string{}
 	for _, s := range all {
-		var fid int64
+		var fid string
 		if s.FileID != nil {
 			fid = *s.FileID
 		}
@@ -495,7 +495,7 @@ type rowScanner interface {
 func scanSnapshot(r rowScanner) (Snapshot, error) {
 	var (
 		id          string
-		fileID      sql.NullInt64
+		fileID      sql.NullString
 		path        string
 		hash        string
 		size        int64
@@ -515,7 +515,7 @@ func scanSnapshot(r rowScanner) (Snapshot, error) {
 		StoragePath: storagePath,
 	}
 	if fileID.Valid {
-		v := fileID.Int64
+		v := fileID.String
 		s.FileID = &v
 	}
 	if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
