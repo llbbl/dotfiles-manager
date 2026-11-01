@@ -24,20 +24,12 @@ install-frozen:
 dev *ARGS:
     go run {{ PKG }} {{ ARGS }}
 
-# The turso native library is extracted to a shared cache path in place, with no
-# temp file and no lock, so parallel `go test ./...` processes can read a
-# half-written file and panic on a hash mismatch.
-
-# Extract the turso native library once, serially
-warm-turso:
-    @go test -count=1 ./internal/store/ >/dev/null
-
 # Run all tests
-test *ARGS: warm-turso
+test *ARGS:
     go test ./... {{ ARGS }}
 
 # Run tests with race detector and coverage
-test-race: warm-turso
+test-race:
     go test -race -cover ./...
 
 # Vet + staticcheck-style checks (uses golangci-lint if installed, else go vet)
