@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.5] - 2026-11-01
+
+### Bug Fixes
+
+- Confine backup writes to repository root
 ## [1.13.4] - 2026-11-01
 
 ### Bug Fixes
