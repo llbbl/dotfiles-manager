@@ -435,6 +435,13 @@ repo reports `no changes` and does not push. In the JSON summary, `empty` means 
 new commit was created, while `pushed` reports whether this run pushed commits;
 a push retry has `empty: true`, `pushed: true`, and an empty `commit` field.
 
+Backup file and log writes stay beneath the configured backup repo on the
+supported macOS and Linux releases, including when a checked-out symlink changes
+while a write is in progress. Relative symlinks that resolve within the repo are
+supported; absolute symlinks and links that escape the repo cause an error. This
+confines path traversal, but does not isolate hard links, mounted filesystems, or
+device files inside the repo.
+
 Flags:
 
 - `--dry-run` — show the plan without writing or pushing.

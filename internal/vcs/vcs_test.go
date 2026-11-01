@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,6 +129,136 @@ func TestPathEscape_Rejected(t *testing.T) {
 	}
 	if err := r.WriteFile("/etc/passwd", []byte("x")); err == nil {
 		t.Errorf("expected ErrPathEscape for absolute")
+	}
+}
+
+func TestBackupWrites_RejectEscapingSymlinks(t *testing.T) {
+	for _, operation := range []string{"write", "append"} {
+		for _, tc := range []struct {
+			name     string
+			parent   bool
+			relative bool
+			missing  bool
+		}{
+			{name: "absolute-parent", parent: true},
+			{name: "relative-parent", parent: true, relative: true},
+			{name: "absolute-parent-new-directories", parent: true, missing: true},
+			{name: "relative-parent-new-directories", parent: true, relative: true, missing: true},
+			{name: "absolute-file"},
+			{name: "relative-file", relative: true},
+			{name: "absolute-dangling-file", missing: true},
+			{name: "relative-dangling-file", relative: true, missing: true},
+		} {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
+				root, outside := t.TempDir(), t.TempDir()
+				protected := filepath.Join(outside, "keep.txt")
+				if err := os.WriteFile(protected, []byte("outside sentinel\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				link := filepath.Join(root, "link")
+				target, rel := protected, "link"
+				if tc.parent {
+					target, rel = outside, filepath.Join("link", "keep.txt")
+					if tc.missing {
+						rel = filepath.Join("link", "new", "nested", "created.txt")
+					}
+				} else if tc.missing {
+					target = filepath.Join(outside, "created.txt")
+				}
+				if tc.relative {
+					var err error
+					target, err = filepath.Rel(filepath.Dir(link), target)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				r := &Repo{path: root}
+				var err error
+				if operation == "write" {
+					err = r.WriteFile(rel, []byte("attempted write\n"))
+				} else {
+					err = r.AppendFile(rel, []byte("attempted append\n"))
+				}
+				if err == nil {
+					t.Error("write through an escaping symlink succeeded")
+				}
+				got, readErr := os.ReadFile(protected)
+				if readErr != nil || string(got) != "outside sentinel\n" {
+					t.Errorf("outside file changed: %q, %v", got, readErr)
+				}
+				entries, readErr := os.ReadDir(outside)
+				if readErr != nil || len(entries) != 1 || entries[0].Name() != "keep.txt" {
+					t.Errorf("outside directory changed: %v, %v", entries, readErr)
+				}
+			})
+		}
+	}
+}
+
+func TestBackupWrites_NestedAndRelativeInRootSymlinks(t *testing.T) {
+	for _, tc := range []struct {
+		name, link, target, rel, actual string
+	}{
+		{name: "nested", rel: "new/nested/file", actual: "new/nested/file"},
+		{name: "parent-link", link: "link", target: "real", rel: "link/new/nested/file", actual: "real/new/nested/file"},
+		{name: "file-link", link: "link", target: "real/file", rel: "link", actual: "real/file"},
+		{name: "parent-dotdot-link", link: "real/link", target: "../real", rel: "real/link/new/file", actual: "real/new/file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "real"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tc.link != "" {
+				if err := os.Symlink(tc.target, filepath.Join(root, tc.link)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := &Repo{path: root}
+			for _, write := range []func(string, []byte) error{r.AppendFile, r.WriteFile, r.AppendFile} {
+				if err := write(filepath.FromSlash(tc.rel), []byte("fixture\n")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(tc.actual)))
+			if err != nil || string(got) != "fixture\nfixture\n" {
+				t.Fatalf("backup contents = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestBackupWrites_RejectAbsoluteInRootSymlink(t *testing.T) {
+	root := t.TempDir()
+	actual := filepath.Join(root, "actual")
+	if err := os.Mkdir(actual, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(actual, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	r := &Repo{path: root}
+	for _, write := range []func(string, []byte) error{r.WriteFile, r.AppendFile} {
+		if err := write("link/file", []byte("fixture\n")); err == nil {
+			t.Error("absolute symlink accepted")
+		}
+	}
+	if entries, err := os.ReadDir(actual); err != nil || len(entries) != 0 {
+		t.Fatalf("absolute link target changed: %v, %v", entries, err)
+	}
+}
+
+func TestBackupWrites_RejectLexicalEscapes(t *testing.T) {
+	r := &Repo{path: t.TempDir()}
+	for _, rel := range []string{"../escape", "nested/../../escape", filepath.Join(t.TempDir(), "absolute")} {
+		for _, write := range []func(string, []byte) error{r.WriteFile, r.AppendFile} {
+			if err := write(rel, []byte("fixture\n")); !errors.Is(err, ErrPathEscape) {
+				t.Errorf("write(%q) = %v, want ErrPathEscape", rel, err)
+			}
+		}
 	}
 }
 

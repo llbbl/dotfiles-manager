@@ -266,6 +266,11 @@ if no files changed. An already synced repo does not push. With `--json`, `empty
 means no new commit was created, and `pushed` reports a successful push in this
 run; a retry can return `empty: true` and `pushed: true`. `--dry-run` never pushes.
 
+Backup file and log writes reject absolute or escaping symlinks on macOS/Linux,
+including links replaced during a write. Relative links that stay within the
+backup repo are supported. This protects path traversal; hard links, mount points,
+and device files within the repo are outside that protection.
+
 ### Review an AI suggestion
 
 ```sh
@@ -292,3 +297,5 @@ patch with numbered hunk ranges.
 - Do not run `dfm migrate`, `dfm prune`, or `dfm sync` speculatively. They are
   operational actions on real user data, not diagnostics.
 - Do not use the user's real dotfiles as a scratch fixture.
+- Keep the backup repo trusted: path confinement does not isolate hard links,
+  mounted filesystems, or device files stored inside it.
