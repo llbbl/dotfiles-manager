@@ -38,12 +38,7 @@ jobs:
           sudo apt-get install -y zsh fish
 
       - name: Test
-        run: |
-          # Extract the turso native library once, serially. Upstream writes it
-          # to a shared cache path in place, so the parallel run below can read
-          # a half-written file and panic on a hash mismatch.
-          go test -count=1 ./internal/store/
-          go test -count=1 ./...
+        run: go test -count=1 ./...
 
   lint:
     name: golangci-lint

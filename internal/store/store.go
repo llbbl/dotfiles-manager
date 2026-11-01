@@ -82,6 +82,9 @@ func Open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
 }
 
 func open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
+	if err := ensureNativeLib(); err != nil {
+		return nil, "", err
+	}
 	raw := strings.TrimSpace(cfg.State.URL)
 	if raw == "" {
 		home, err := os.UserHomeDir()
