@@ -45,7 +45,7 @@ func newSuggestionsCmd() *cobra.Command {
 			}
 			defer s.Close()
 
-			var fileID int64
+			var fileID string
 			if file != "" {
 				canonical, _, rerr := tracker.Resolve(file)
 				if rerr == nil {
@@ -60,7 +60,7 @@ func newSuggestionsCmd() *cobra.Command {
 						}
 					}
 				}
-				if fileID == 0 {
+				if fileID == "" {
 					return exitf(exitNotFound, "not tracked: %s", file)
 				}
 			}
@@ -73,7 +73,7 @@ func newSuggestionsCmd() *cobra.Command {
 
 			// Build display-path map for nice rendering.
 			files, _ := tracker.List(ctx, s)
-			dispByID := map[int64]string{}
+			dispByID := map[string]string{}
 			for _, f := range files {
 				dispByID[f.ID] = f.DisplayPath
 			}

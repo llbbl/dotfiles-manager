@@ -19,7 +19,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
-func insertSuggestionCmd(t *testing.T, ctx context.Context, s *store.Store, fileID int64, diff string) string {
+func insertSuggestionCmd(t *testing.T, ctx context.Context, s *store.Store, fileID, diff string) string {
 	t.Helper()
 	id, err := ids.New()
 	if err != nil {

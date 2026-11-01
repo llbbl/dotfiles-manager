@@ -43,7 +43,7 @@ var (
 // Suggestion is a row from the suggestions table, decoded.
 type Suggestion struct {
 	ID        string
-	FileID    int64
+	FileID    string
 	Provider  string
 	Prompt    string
 	Diff      string
@@ -95,7 +95,7 @@ func (r *Repo) Get(ctx context.Context, id string) (Suggestion, error) {
 		return Suggestion{}, err
 	}
 	row := r.s.DB().QueryRowContext(ctx, `
-		SELECT id, COALESCE(file_id, 0), provider, prompt, diff, status, created_at, decided_at
+		SELECT id, COALESCE(file_id, ''), provider, prompt, diff, status, created_at, decided_at
 		FROM suggestions WHERE id = ?`, full)
 	return scanSuggestion(row)
 }
@@ -110,14 +110,14 @@ func (r *Repo) resolve(ctx context.Context, id string) (string, error) {
 	return full, err
 }
 
-// List returns suggestions ordered by created_at DESC. Pass fileID=0 to
+// List returns suggestions ordered by created_at DESC. Pass fileID="" to
 // skip the file filter and status="" to skip the status filter.
-func (r *Repo) List(ctx context.Context, fileID int64, status string) ([]Suggestion, error) {
-	q := `SELECT id, COALESCE(file_id, 0), provider, prompt, diff, status, created_at, decided_at
+func (r *Repo) List(ctx context.Context, fileID, status string) ([]Suggestion, error) {
+	q := `SELECT id, COALESCE(file_id, ''), provider, prompt, diff, status, created_at, decided_at
 	      FROM suggestions`
 	var conds []string
 	var args []any
-	if fileID > 0 {
+	if fileID != "" {
 		conds = append(conds, "file_id = ?")
 		args = append(args, fileID)
 	}
@@ -171,26 +171,26 @@ func (r *Repo) ResolveFile(ctx context.Context, sugID string) (tracker.File, err
 		return tracker.File{}, err
 	}
 	row := r.s.DB().QueryRowContext(ctx, `SELECT file_id FROM suggestions WHERE id = ?`, full)
-	var fileID sql.NullInt64
+	var fileID sql.NullString
 	if err := row.Scan(&fileID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
 			return tracker.File{}, ErrNotFound
 		}
 		return tracker.File{}, err
 	}
-	if !fileID.Valid || fileID.Int64 == 0 {
+	if !fileID.Valid || fileID.String == "" {
 		return tracker.File{}, ErrFileMissing
 	}
 	frow := r.s.DB().QueryRowContext(ctx, `
 		SELECT id, path, display_path, added_at, COALESCE(last_hash,''), COALESCE(last_synced,'')
-		FROM tracked_files WHERE id = ?`, fileID.Int64)
+		FROM tracked_files WHERE id = ?`, fileID.String)
 	var (
-		id          int64
-		path        string
-		display     string
-		addedAt     string
-		lastHash    string
-		lastSynced  string
+		id         string
+		path       string
+		display    string
+		addedAt    string
+		lastHash   string
+		lastSynced string
 	)
 	if err := frow.Scan(&id, &path, &display, &addedAt, &lastHash, &lastSynced); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no rows") {
@@ -340,7 +340,7 @@ type rowScanner interface {
 func scanSuggestion(r rowScanner) (Suggestion, error) {
 	var (
 		id        string
-		fileID    int64
+		fileID    string
 		provider  string
 		prompt    string
 		diff      string

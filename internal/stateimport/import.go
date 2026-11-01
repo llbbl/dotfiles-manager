@@ -214,7 +214,7 @@ func importTrackedFiles(ctx context.Context, opts Options) (TableResult, []strin
 
 	for rows.Next() {
 		var (
-			id          int64
+			id          string
 			path        string
 			displayPath string
 			addedAt     string
@@ -226,7 +226,7 @@ func importTrackedFiles(ctx context.Context, opts Options) (TableResult, []strin
 		}
 		exists, err := rowExists(ctx, opts.Target, "tracked_files", "id", id)
 		if err != nil {
-			return res, nil, fmt.Errorf("check existing id=%d: %w", id, err)
+			return res, nil, fmt.Errorf("check existing id=%s: %w", id, err)
 		}
 		if exists && !opts.Replace {
 			res.SkippedExisting++
@@ -244,7 +244,7 @@ func importTrackedFiles(ctx context.Context, opts Options) (TableResult, []strin
 			verb+` INTO tracked_files (id, path, display_path, added_at, last_hash, last_synced)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
 			id, path, displayPath, addedAt, lastHash, lastSynced); err != nil {
-			return res, nil, fmt.Errorf("insert id=%d: %w", id, err)
+			return res, nil, fmt.Errorf("insert id=%s: %w", id, err)
 		}
 		res.Imported++
 	}
@@ -264,7 +264,7 @@ func importSnapshots(ctx context.Context, opts Options) (TableResult, []string, 
 	for rows.Next() {
 		var (
 			id          string
-			fileID      sql.NullInt64
+			fileID      sql.NullString
 			path        string
 			hash        string
 			size        int64
@@ -320,7 +320,7 @@ func importSuggestions(ctx context.Context, opts Options) (TableResult, []string
 	for rows.Next() {
 		var (
 			id        string
-			fileID    sql.NullInt64
+			fileID    sql.NullString
 			provider  string
 			prompt    string
 			diff      string
