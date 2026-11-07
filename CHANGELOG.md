@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.11] - 2026-11-07
+
+### Bug Fixes
+
+- Dedupe imported audit actions by content instead of id
 ## [1.13.10] - 2026-11-01
 
 ### Bug Fixes
