@@ -45,7 +45,8 @@ func newStateImportCmd() *cobra.Command {
 			"from --from <url> into the active state DB. Snapshot rows whose blob is " +
 			"not present in the local blob store are skipped with a warning. Tracked " +
 			"files are matched by path; existing rows are skipped unless --replace is " +
-			"set. The import is all-or-nothing.",
+			"set. Actions are matched by timestamp, action and payload, so --replace " +
+			"never overwrites them. The import is all-or-nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if strings.TrimSpace(fromURL) == "" {

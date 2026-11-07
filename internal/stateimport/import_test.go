@@ -59,6 +59,126 @@ func countRows(t *testing.T, db *sql.DB, table string) int {
 	return n
 }
 
+func insertAction(t *testing.T, db *sql.DB, id int64, ts, action, payload string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO actions (id, ts, action, payload_json) VALUES (?, ?, ?, ?)`,
+		id, ts, action, payload); err != nil {
+		t.Fatalf("insert action: %v", err)
+	}
+}
+
+func TestImport_ActionsCollidingIDsPreserveTarget(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replace=%v", replace), func(t *testing.T) {
+			src, dst := openTempDB(t).DB(), openTempDB(t).DB()
+			insertAction(t, src, 1, "2024-01-02T00:00:00.000Z", "track", `{}`)
+			insertAction(t, dst, 1, "2024-01-01T00:00:00.000Z", "backup", `{}`)
+			before := dumpTable(t, dst, "actions")
+
+			res, err := Import(context.Background(), Options{
+				Source: src, Target: dst, Tables: []string{"actions"}, Replace: replace,
+			})
+			if err != nil {
+				t.Fatalf("Import: %v", err)
+			}
+			if imp, skipped, _ := res.Totals(); imp != 1 || skipped != 0 {
+				t.Errorf("imported=%d skipped=%d, want 1/0", imp, skipped)
+			}
+			after := dumpTable(t, dst, "actions")
+			if len(after) != 2 {
+				t.Errorf("actions count = %d, want 2", len(after))
+			}
+			if !slices.Contains(after, before[0]) {
+				t.Error("original target action changed")
+			}
+			var importedID int64
+			if err := dst.QueryRow(`SELECT id FROM actions WHERE ts = ? AND action = ? AND payload_json = ?`,
+				"2024-01-02T00:00:00.000Z", "track", `{}`).Scan(&importedID); err != nil {
+				t.Fatalf("query imported action: %v", err)
+			}
+			if importedID == 1 {
+				t.Error("imported action reused the original target id")
+			}
+		})
+	}
+}
+
+func TestImport_ActionsReimportSkipsExistingContent(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replace=%v", replace), func(t *testing.T) {
+			src, dst := openTempDB(t).DB(), openTempDB(t).DB()
+			insertAction(t, src, 10, "2024-01-01T00:00:00.000Z", "track", `{}`)
+			insertAction(t, src, 20, "2024-01-01T00:00:00.001Z", "track", `{}`)
+			insertAction(t, src, 30, "2024-01-01T00:00:00.000Z", "backup", `{}`)
+			insertAction(t, src, 40, "2024-01-01T00:00:00.000Z", "track", `{"count":1}`)
+			opts := Options{Source: src, Target: dst, Tables: []string{"actions"}, Replace: replace}
+			first, err := Import(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("first Import: %v", err)
+			}
+			if imp, skipped, _ := first.Totals(); imp != 4 || skipped != 0 {
+				t.Fatalf("first imported=%d skipped=%d, want 4/0", imp, skipped)
+			}
+			before := dumpTable(t, dst, "actions")
+			second, err := Import(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("second Import: %v", err)
+			}
+			if imp, skipped, _ := second.Totals(); imp != 0 || skipped != 4 {
+				t.Errorf("second imported=%d skipped=%d, want 0/4", imp, skipped)
+			}
+			if n := countRows(t, dst, "actions"); n != 4 {
+				t.Errorf("actions count = %d, want 4", n)
+			}
+			if !reflect.DeepEqual(dumpTable(t, dst, "actions"), before) {
+				t.Error("re-import changed target actions")
+			}
+		})
+	}
+}
+
+func TestImport_ActionsDryRunMatchesRealRun(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replace=%v", replace), func(t *testing.T) {
+			src, dst := openTempDB(t).DB(), openTempDB(t).DB()
+			insertAction(t, dst, 1, "2024-01-01T00:00:00.000Z", "backup", `{}`)
+			insertAction(t, src, 1, "2024-01-02T00:00:00.000Z", "track", `{}`)
+			insertAction(t, src, 10, "2024-01-01T00:00:00.000Z", "backup", `{}`)
+			insertAction(t, src, 20, "2024-01-02T00:00:00.000Z", "track", `{}`)
+			before, srcBefore := dumpAll(t, dst), dumpAll(t, src)
+			opts := Options{Source: src, Target: dst, Tables: []string{"actions"}, Replace: replace, DryRun: true}
+			dry, err := Import(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("dry Import: %v", err)
+			}
+			if imp, skipped, _ := dry.Totals(); imp != 1 || skipped != 2 {
+				t.Errorf("dry imported=%d skipped=%d, want 1/2", imp, skipped)
+			}
+			if !dry.DryRun {
+				t.Error("dry-run result is not marked as a dry run")
+			}
+			if !reflect.DeepEqual(dumpAll(t, dst), before) {
+				t.Fatal("dry run changed target")
+			}
+			opts.DryRun = false
+			real, err := Import(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("real Import: %v", err)
+			}
+			dry.DryRun = false
+			if !reflect.DeepEqual(dry, real) {
+				t.Errorf("dry-run counts differ from real-run counts")
+			}
+			if n := countRows(t, dst, "actions"); n != 2 {
+				t.Errorf("actions count = %d, want 2", n)
+			}
+			if !reflect.DeepEqual(dumpAll(t, src), srcBefore) {
+				t.Error("import changed source")
+			}
+		})
+	}
+}
+
 func TestValidateTables_Defaults(t *testing.T) {
 	got, err := ValidateTables(nil)
 	if err != nil {
