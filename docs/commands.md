@@ -553,6 +553,8 @@ any error leaves the target unchanged. History imported without a link stays
 unlinked on a later import; re-run with `tracked_files` included and `--replace`
 to relink it.
 
+Actions are matched by timestamp, action and payload, so `--replace` never overwrites them.
+
 Use `--dry-run` to preview row counts, then confirm interactively or pass `--yes`.
 `--json` emits the summary as JSON. The source is opened without running migrations.
 Remote source URLs appear only as `scheme://host` in prompts, errors, debug logs,

@@ -461,21 +461,21 @@ func (r *run) importActions(ctx context.Context) (TableResult, []string, error) 
 		if err := rows.Scan(&id, &ts, &action, &payloadJSON); err != nil {
 			return res, nil, fmt.Errorf("scan: %w", err)
 		}
-		exists, err := rowExists(ctx, r.tx, "actions", "id", id)
-		if err != nil {
+		var exists int
+		// Checking the transaction also collapses duplicate events within the source.
+		err := r.tx.QueryRowContext(ctx,
+			`SELECT 1 FROM actions WHERE ts = ? AND action = ? AND payload_json = ? LIMIT 1`,
+			ts, action, payloadJSON).Scan(&exists)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return res, nil, fmt.Errorf("check existing id=%d: %w", id, err)
 		}
-		if exists && !r.opts.Replace {
+		if err == nil {
 			res.SkippedExisting++
 			continue
 		}
-		verb := "INSERT"
-		if exists {
-			verb = "INSERT OR REPLACE"
-		}
 		if _, err := r.tx.ExecContext(ctx,
-			verb+` INTO actions (id, ts, action, payload_json) VALUES (?, ?, ?, ?)`,
-			id, ts, action, payloadJSON); err != nil {
+			`INSERT INTO actions (ts, action, payload_json) VALUES (?, ?, ?)`,
+			ts, action, payloadJSON); err != nil {
 			return res, nil, fmt.Errorf("insert id=%d: %w", id, err)
 		}
 		res.Imported++

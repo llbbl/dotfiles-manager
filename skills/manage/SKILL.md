@@ -87,6 +87,8 @@ warning, and any error rolls back the whole import. Remote source URLs are reduc
 to `scheme://host` in prompts, errors, and logs; source-open errors omit
 potentially sensitive driver details.
 
+Actions are matched by timestamp, action and payload, so `--replace` never overwrites them.
+
 ### Destructive commands have a fixed contract
 
 Preview, then default-no confirmation, `--yes` to proceed, `--dry-run` to stop
