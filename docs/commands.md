@@ -539,6 +539,29 @@ Flags: `--dry-run`, `--json`.
 
 ## State database
 
+With a remote Turso state store, dfm pulls into its local replica before applying
+migrations and pushes when the store closes. A failed pull warns on stderr and
+continues with the cached replica. A failed push exits non-zero with "changes
+saved locally but not pushed to <scheme://host>"; those changes remain on disk
+and push on the next command that completes successfully. Concurrent edits to the
+same row use last-push-wins. This state synchronization is separate from
+`dfm sync`, which pushes the backup Git repository.
+
+When upgrading from a version that did not push remote state, a single-machine
+setup needs no recovery: the first command pushes its saved history. If several
+machines have unpushed replicas, upgrade and run a command on one machine first.
+Before running the upgraded dfm on each other machine, move
+`~/.local/share/dotfiles/remote-cache/<host>.db` aside so the next command
+bootstraps a fresh replica from the remote. Then merge the saved replica by path:
+
+```sh
+dfm state import --from file://<moved-replica> --tables tracked_files,snapshots,suggestions,actions --dry-run
+dfm state import --from file://<moved-replica> --tables tracked_files,snapshots,suggestions,actions
+```
+
+Review the preview and confirm the import. Replaying several old replicas
+directly can replay table-rebuilding migrations and erase another machine's rows.
+
 ### `dfm state import --from <url>`
 
 Copy rows from another state database into the active store. By default, imports

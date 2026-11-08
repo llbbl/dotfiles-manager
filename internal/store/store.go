@@ -10,19 +10,32 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	turso "turso.tech/database/tursogo"
 )
 
+// Remote pulls and final pushes are bounded to 30 seconds.
+const remoteSyncTimeout = 30 * time.Second
+
 // Store is a handle around an open *sql.DB.
 type Store struct {
-	db *sql.DB
+	db                  *sql.DB
+	sync                *turso.TursoSyncDb
+	push                func(context.Context) error
+	target              string
+	preMigrationVersion int64
+	closeOnce           sync.Once
+	closeErr            error
 	// shared marks this Store as a non-owning reference: Close is a
 	// no-op. See SharedRef.
 	shared bool
@@ -31,14 +44,32 @@ type Store struct {
 // DB returns the underlying *sql.DB.
 func (s *Store) DB() *sql.DB { return s.db }
 
-// Close closes the underlying *sql.DB. If this Store is a shared
-// reference (constructed via SharedRef), Close is a no-op — the
-// original owner is responsible for the underlying connection.
+// PreMigrationVersion returns the schema version read before New ran migrations.
+// A fresh database has version 0; -1 means the version could not be read.
+func (s *Store) PreMigrationVersion() int64 { return s.preMigrationVersion }
+
+// Close pushes remote changes before closing the database, even if the push fails.
+// Shared references leave both operations to their owner.
 func (s *Store) Close() error {
 	if s.shared {
 		return nil
 	}
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		if s.push != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), remoteSyncTimeout)
+			defer cancel()
+			if err := s.push(ctx); err != nil {
+				s.closeErr = fmt.Errorf("changes saved locally but not pushed to %s: %w; they push on the next command that completes successfully",
+					scrub(s.target), &remoteOperationError{cause: err})
+			}
+		}
+		closeErr := s.db.Close()
+		if closeErr != nil && s.sync != nil {
+			closeErr = &remoteOperationError{cause: closeErr}
+		}
+		s.closeErr = errors.Join(s.closeErr, closeErr)
+	})
+	return s.closeErr
 }
 
 // SharedRef returns a non-owning view of this Store. Callers can
@@ -47,42 +78,42 @@ func (s *Store) Close() error {
 // the root cobra command to share its store with subcommands so we
 // only open the DB (and run migrations) once per process.
 func (s *Store) SharedRef() *Store {
-	return &Store{db: s.db, shared: true}
+	return &Store{db: s.db, shared: true, preMigrationVersion: s.preMigrationVersion}
 }
 
 // New opens the state DB, pings it, and runs pending migrations.
 func New(ctx context.Context, cfg *config.Config) (*Store, error) {
 	dlog.From(ctx).Info("opening state store", "target", scrub(strings.TrimSpace(cfg.State.URL)))
-	db, target, err := open(ctx, cfg)
+	s, _, err := Open(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping %s: %w", scrub(target), err)
-	}
-	if err := RunMigrations(ctx, db); err != nil {
-		_ = db.Close()
+	s.preMigrationVersion = readPreMigrationVersion(ctx, s.db)
+	if err := RunMigrations(ctx, s.db); err != nil {
+		_ = s.db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return s, nil
 }
 
 // Open opens the state DB without running migrations. Used by the migrate
 // subcommand so it can drive goose directly.
-func Open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
-	db, target, err := open(ctx, cfg)
+func Open(ctx context.Context, cfg *config.Config) (*Store, string, error) {
+	s, target, err := open(ctx, cfg)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	if err := s.db.PingContext(ctx); err != nil {
+		_ = s.db.Close()
+		if s.sync != nil {
+			err = &remoteOperationError{cause: err}
+		}
 		return nil, "", fmt.Errorf("ping %s: %w", scrub(target), err)
 	}
-	return db, target, nil
+	return s, scrub(target), nil
 }
 
-func open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
+func open(ctx context.Context, cfg *config.Config) (*Store, string, error) {
 	if err := ensureNativeLib(); err != nil {
 		return nil, "", err
 	}
@@ -114,13 +145,19 @@ func open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
 			ClientName: "dotfiles-manager",
 		})
 		if err != nil {
-			return nil, "", fmt.Errorf("open remote %s: %w", scrub(raw), err)
+			return nil, "", fmt.Errorf("open remote %s: %w", scrub(raw), &remoteOperationError{cause: err})
 		}
 		db, err := syncDB.Connect(ctx)
 		if err != nil {
-			return nil, "", fmt.Errorf("connect remote %s: %w", scrub(raw), err)
+			return nil, "", fmt.Errorf("connect remote %s: %w", scrub(raw), &remoteOperationError{cause: err})
 		}
-		return db, raw, nil
+		pullCtx, cancel := context.WithTimeout(ctx, remoteSyncTimeout)
+		defer cancel()
+		if _, err := syncDB.Pull(pullCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not pull from %s: %v; using local replica\n",
+				scrub(raw), &remoteOperationError{cause: err})
+		}
+		return &Store{db: db, sync: syncDB, push: syncDB.Push, target: scrub(raw), preMigrationVersion: -1}, raw, nil
 	}
 
 	path := localPath(raw)
@@ -131,8 +168,26 @@ func open(ctx context.Context, cfg *config.Config) (*sql.DB, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("open %s: %w", path, err)
 	}
-	return sql.OpenDB(fkConnector{connector}), path, nil
+	return &Store{db: sql.OpenDB(fkConnector{connector}), target: path, preMigrationVersion: -1}, path, nil
 }
+
+// Driver errors can contain credentials or row contents; preserve their identity
+// for errors.Is/As while keeping their text out of diagnostics.
+type remoteOperationError struct{ cause error }
+
+var remoteHTTPStatus = regexp.MustCompile(`(?i)\b(?:http(?:/\d(?:\.\d)?)?(?: status(?: code)?)?|status(?: code)?)(?:\s*[:=]\s*|\s+)([1-5][0-9]{2})\b`)
+
+func (e *remoteOperationError) Error() string {
+	if status := remoteHTTPStatus.FindStringSubmatch(e.cause.Error()); len(status) == 2 {
+		return "remote operation failed (HTTP " + status[1] + ")"
+	}
+	var networkErr net.Error
+	if errors.Is(e.cause, context.DeadlineExceeded) || errors.As(e.cause, &networkErr) {
+		return "remote operation failed (network unreachable/timeout)"
+	}
+	return "remote operation failed"
+}
+func (e *remoteOperationError) Unwrap() error { return e.cause }
 
 // fkConnector enables foreign keys on each new pooled connection: the pragma
 // is per-connection, off by default in turso, and tursogo has no DSN option
@@ -187,10 +242,11 @@ func remoteCachePath(remote string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home: %w", err)
 	}
-	host := remote
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		host = u.Host
+	u, err := url.Parse(remote)
+	if err != nil || u.Host == "" {
+		return "", errors.New("invalid remote URL")
 	}
+	host := u.Host
 	safe := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
@@ -206,6 +262,9 @@ func remoteCachePath(remote string) (string, error) {
 func scrub(u string) string {
 	parsed, err := url.Parse(u)
 	if err != nil || parsed.Host == "" {
+		if isRemote(u) {
+			return "<redacted remote URL>"
+		}
 		return u
 	}
 	return parsed.Scheme + "://" + parsed.Host

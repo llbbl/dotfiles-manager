@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -48,7 +47,7 @@ func newStateImportCmd() *cobra.Command {
 			"set. Actions are matched by timestamp, action and payload, so --replace " +
 			"never overwrites them. The import is all-or-nothing.",
 		Args: cobra.NoArgs,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(c *cobra.Command, _ []string) (retErr error) {
 			if strings.TrimSpace(fromURL) == "" {
 				return exitf(exitResolveErr, "--from is required")
 			}
@@ -75,7 +74,7 @@ func newStateImportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer target.Close()
+			defer func() { retErr = errors.Join(retErr, target.Close()) }()
 
 			// Open source without auto-migration. We don't want to
 			// mutate the source DB on a read-only-ish import.
@@ -83,7 +82,7 @@ func newStateImportCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open source: %w", err)
 			}
-			defer srcDB.Close()
+			defer func() { retErr = errors.Join(retErr, srcDB.Close()) }()
 			dlog.From(ctx).Debug("state import source", "target", srcTarget)
 
 			if !dryRun && !yes {
@@ -101,7 +100,7 @@ func newStateImportCmd() *cobra.Command {
 			}
 
 			res, err := stateimport.Import(ctx, stateimport.Options{
-				Source:     srcDB,
+				Source:     srcDB.DB(),
 				Target:     target.DB(),
 				Tables:     tables,
 				DryRun:     dryRun,
@@ -165,9 +164,9 @@ func normalizeStateURL(s string) string {
 }
 
 // openSourceDB opens the source state DB at fromURL without
-// running migrations. Returns the *sql.DB, the resolved target
+// running migrations. Returns the owning Store, the resolved target
 // string (for logging), and any error.
-func openSourceDB(ctx context.Context, fromURL string) (*sql.DB, string, error) {
+func openSourceDB(ctx context.Context, fromURL string) (*store.Store, string, error) {
 	// store.Open consumes a *config.Config; build a minimal one
 	// scoped to the source URL. We pull the auth token off the
 	// URL query string for remote sources so users can pass

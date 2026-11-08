@@ -50,7 +50,6 @@ func resolveLogLevel(verbose bool, env string) (string, error) {
 		envLogLevel, env)
 }
 
-
 // Populated at build time via -ldflags (see .goreleaser.yaml).
 var (
 	version = "0.0.1-dev"
@@ -88,14 +87,17 @@ var activeDlog dlogState
 // fresh-DB initial migration that PreRunE silently applied.
 //
 // Sentinel values:
-//   -1: not captured (e.g. config wasn't loaded or peek failed)
-//    0: fresh DB, no goose_db_version rows yet
-//   >0: that schema version was already recorded
+//
+//	-1: not captured (e.g. store opening or the version read failed)
+//	 0: fresh DB, no goose_db_version rows yet
+//	>0: that schema version was already recorded
 var preMigrationVersion int64 = -1
 
 func main() {
 	root := newRootCmd()
-	if err := root.Execute(); err != nil {
+	err := root.Execute()
+	err = errors.Join(err, closeActiveResources())
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var ee *exitError
 		if errors.As(err, &ee) {
@@ -103,6 +105,24 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+// Cobra skips post-run hooks on errors, so main also closes any remaining owner.
+func closeActiveResources() error {
+	if activeAudit.logger != nil {
+		_ = activeAudit.logger.Close()
+	}
+	var closeErr error
+	if activeAudit.store != nil {
+		closeErr = activeAudit.store.Close()
+	}
+	audit.SetDefault(nil)
+	activeAudit = auditState{}
+	if activeDlog.closer != nil {
+		_ = activeDlog.closer.Close()
+	}
+	activeDlog = dlogState{}
+	return closeErr
 }
 
 // newRootCmd builds the top-level `dfm` cobra command. It wires the
@@ -156,15 +176,7 @@ func newRootCmd() *cobra.Command {
 			dl.Debug("config loaded", "path", path, "backend", cfg.Log.Backend)
 			c.SetContext(config.WithContext(c.Context(), cfg))
 
-			// Peek at the pre-migration schema version before
-			// store.New auto-applies any pending migrations. Failure
-			// here is non-fatal: leave the sentinel -1 so consumers
-			// can fall back to existing messaging.
-			if v, perr := store.CurrentDBVersionBefore(c.Context(), cfg); perr == nil {
-				preMigrationVersion = v
-			} else {
-				preMigrationVersion = -1
-			}
+			preMigrationVersion = -1
 
 			// Best-effort: build an audit Logger backed by libSQL. If the
 			// store can't open (e.g. `dfm config` before init), keep
@@ -173,29 +185,18 @@ func newRootCmd() *cobra.Command {
 			if serr != nil {
 				return nil
 			}
+			preMigrationVersion = s.PreMigrationVersion()
+			activeAudit = auditState{store: s}
 			l, lerr := audit.New(c.Context(), cfg, s)
 			if lerr != nil {
-				_ = s.Close()
 				return nil
 			}
 			activeAudit = auditState{logger: l, store: s}
 			audit.SetDefault(l)
 			return nil
 		},
-		PersistentPostRunE: func(c *cobra.Command, _ []string) error {
-			if activeAudit.logger != nil {
-				_ = activeAudit.logger.Close()
-			}
-			if activeAudit.store != nil {
-				_ = activeAudit.store.Close()
-			}
-			audit.SetDefault(nil)
-			activeAudit = auditState{}
-			if activeDlog.closer != nil {
-				_ = activeDlog.closer.Close()
-			}
-			activeDlog = dlogState{}
-			return nil
+		PersistentPostRunE: func(_ *cobra.Command, _ []string) error {
+			return closeActiveResources()
 		},
 	}
 
@@ -249,4 +250,3 @@ func newVersionCmd() *cobra.Command {
 		},
 	}
 }
-

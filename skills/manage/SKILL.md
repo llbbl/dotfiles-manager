@@ -77,6 +77,20 @@ switches backends sees an empty snapshot list and concludes their history is gon
 It is not — it is sitting in the other backend. Check which one is active
 (`[state].url` in the config file) before diagnosing anything as missing data.
 
+Remote state pulls before migrations and pushes when its owning store closes,
+after the audit logger. A pull failure warns and continues with the local replica;
+a push failure exits non-zero, saying the changes are saved locally and push on
+the next command that completes successfully. Conflicts use last-push-wins per row. Diagnostics show only
+`scheme://host`. This is separate from the backup Git repository's `dfm sync`.
+
+When upgrading from a version without remote pushes, one machine needs no
+recovery. For multiple machines with unpushed histories, upgrade and run a
+command on one machine first; before running the new dfm on each other machine,
+move `~/.local/share/dotfiles/remote-cache/<host>.db` aside and bootstrap fresh.
+Then preview and confirm `dfm state import --from file://<moved-replica> --tables
+tracked_files,snapshots,suggestions,actions` to merge by path. Do not replay all
+old replicas directly: their table-rebuilding migrations can erase earlier rows.
+
 `dfm state import --from <url> --dry-run` previews copying rows into the active
 store. Apply only after reviewing that preview, with interactive confirmation or
 `--yes`. The default tables are `tracked_files,snapshots`; existing rows are

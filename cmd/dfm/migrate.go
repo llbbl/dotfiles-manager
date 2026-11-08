@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
@@ -30,17 +31,18 @@ func migrateSubCmd(name, short string) *cobra.Command {
 	return &cobra.Command{
 		Use:   name,
 		Short: short,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(c *cobra.Command, _ []string) (retErr error) {
 			ctx := c.Context()
 			cfg := config.FromContext(ctx)
 			if cfg == nil {
 				return fmt.Errorf("config not loaded")
 			}
-			db, target, err := store.Open(ctx, cfg)
+			s, target, err := store.Open(ctx, cfg)
 			if err != nil {
 				return err
 			}
-			defer db.Close()
+			defer func() { retErr = errors.Join(retErr, s.Close()) }()
+			db := s.DB()
 			if flagVerbose {
 				fmt.Fprintf(c.ErrOrStderr(), "state: %s\n", target)
 			}

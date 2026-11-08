@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -81,7 +82,7 @@ func extractTursoToken(stdout string) string {
 // TODO(future): support --auto-install to run the upstream installer
 // (brew or `curl ... | bash`) on the user's behalf. For now, we print
 // the command and exit so the user can run it themselves.
-func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName string) error {
+func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName string) (retErr error) {
 	// 1. Detect turso CLI.
 	if _, err := exec.LookPath("turso"); err != nil {
 		if runtime.GOOS == "darwin" {
@@ -175,7 +176,7 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
 		})
 		os.Exit(1)
 	}
-	defer func() { _ = s.Close() }()
+	defer func() { retErr = errors.Join(retErr, s.Close()) }()
 
 	// 10. Success block.
 	fmt.Printf(`
