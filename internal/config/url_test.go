@@ -1,6 +1,37 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestRemoteURLDisplay_Hostless(t *testing.T) {
+	for _, scheme := range []string{"libsql", "https", "http", "wss", "ws"} {
+		for _, shape := range []string{"single-slash", "opaque"} {
+			t.Run(scheme+"/"+shape, func(t *testing.T) {
+				raw := scheme + ":/h/%zz?authToken=SECRET-88"
+				if shape == "opaque" {
+					raw = scheme + ":h/path?authToken=SECRET-88"
+				}
+				if ScrubURL(raw) != "<redacted remote URL>" {
+					t.Error("hostless remote URL was not redacted")
+				}
+				cfg := &Config{State: StateConfig{URL: raw}}
+				shown := cfg.Redacted()
+				if shown.State.URL != "<redacted remote URL>" {
+					t.Error("redacted config retained the hostless remote URL")
+				}
+				data, err := shown.EncodeTOML()
+				if err != nil {
+					t.Fatal("encoding redacted config failed")
+				}
+				if strings.Contains(string(data), "SECRET-88") {
+					t.Error("config display contains the embedded credential")
+				}
+			})
+		}
+	}
+}
 
 func TestSplitAuthToken_Malformed(t *testing.T) {
 	clean, token, err := SplitAuthToken("libsql://h/%zz?authToken=SECRET-88")

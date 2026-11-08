@@ -251,6 +251,104 @@ func TestWizard_URLToken_Retained(t *testing.T) {
 	}
 }
 
+func TestWizard_LocalStatePathUnchanged(t *testing.T) {
+	for _, kind := range []string{"default", "bare"} {
+		for _, directory := range []string{"with space", "with%percent"} {
+			t.Run(kind+"/"+directory, func(t *testing.T) {
+				pinHome(t)
+				t.Setenv("TURSO_DATABASE_URL", "")
+				t.Setenv("TURSO_AUTH_TOKEN", "")
+				dataHome := filepath.Join(t.TempDir(), directory)
+				t.Setenv("XDG_DATA_HOME", dataHome)
+				wantURL := "file://" + filepath.Join(dataHome, "dotfiles", "state.db")
+				var existing *config.Config
+				if kind == "bare" {
+					existing = config.Defaults()
+					wantURL = filepath.Join(dataHome, "state.db")
+					existing.State.URL = wantURL
+				}
+				cfgPath := filepath.Join(t.TempDir(), "config.toml")
+				plan, err := Run(Options{ConfigPath: cfgPath, Yes: true, State: "local"}, existing)
+				if err != nil {
+					t.Fatal("valid local state path was rejected")
+				}
+				written, err := config.Load(cfgPath)
+				if err != nil {
+					t.Fatal("reading written config failed")
+				}
+				if !plan.ConfigWritten || plan.Config.State.URL != wantURL || written.State.URL != wantURL {
+					t.Error("local state path was not preserved byte for byte")
+				}
+			})
+		}
+	}
+}
+
+func TestWizard_URLToken_RepeatedEndpoint(t *testing.T) {
+	for _, endpoint := range []string{"same", "different-host", "different-path", "different-scheme"} {
+		t.Run(endpoint, func(t *testing.T) {
+			pinHome(t)
+			t.Setenv("TURSO_DATABASE_URL", "")
+			t.Setenv("TURSO_AUTH_TOKEN", "")
+			existing := config.Defaults()
+			existing.State.URL = "libsql://h?authToken=SECRET-88"
+			flagURL := "libsql://h"
+			switch endpoint {
+			case "different-host":
+				flagURL = "libsql://other"
+			case "different-path":
+				flagURL = "libsql://h/other"
+			case "different-scheme":
+				flagURL = "https://h"
+			}
+			var out bytes.Buffer
+			plan, err := Run(Options{
+				ConfigPath: filepath.Join(t.TempDir(), "config.toml"), Yes: true, State: "turso", TursoURL: flagURL, Out: &out,
+			}, existing)
+			if err != nil {
+				t.Fatal("wizard failed")
+			}
+			if strings.Contains(out.String(), "SECRET-88") || strings.Contains(plan.Config.State.URL, "SECRET-88") {
+				t.Error("retained token appeared in output or the resulting URL")
+			}
+			env, readErr := os.ReadFile(envFilePath(t))
+			if endpoint == "same" {
+				if plan.ProvisionTurso || plan.Config.State.AuthToken != "SECRET-88" || plan.Config.State.URL != flagURL {
+					t.Error("repeated endpoint did not reuse the retained token without provisioning")
+				}
+				if readErr != nil || !strings.Contains(string(env), "TURSO_AUTH_TOKEN=SECRET-88\n") {
+					t.Error("retained token did not reach the env file")
+				}
+			} else {
+				if !plan.ProvisionTurso {
+					t.Error("a different endpoint reused the retained token")
+				}
+				if readErr == nil || !os.IsNotExist(readErr) {
+					t.Error("a different endpoint persisted the retained token")
+				}
+			}
+		})
+	}
+}
+
+func TestWizard_URLToken_LocalFlagPrecedence(t *testing.T) {
+	pinHome(t)
+	t.Setenv("TURSO_DATABASE_URL", "")
+	t.Setenv("TURSO_AUTH_TOKEN", "")
+	cfg := config.Defaults()
+	cfg.State.URL = "https://h?authToken=SECRET-88"
+	var out bytes.Buffer
+	_, _, token, err := chapterState(bufio.NewReader(strings.NewReader("")), &out, Options{
+		Yes: true, State: "local", TursoAuthToken: "FLAG",
+	}, cfg, true)
+	if err != nil || token != "FLAG" {
+		t.Error("explicit token did not win on the local retained path")
+	}
+	if cfg.State.URL != "https://h" || strings.Contains(out.String(), "SECRET-88") {
+		t.Error("local retained path leaked its embedded token")
+	}
+}
+
 // helper: run the wizard with the given stdin string + options and
 // return the plan, captured stdout, and any error. HOME and both XDG
 // roots are pinned to a temp dir so no test can reach the developer's

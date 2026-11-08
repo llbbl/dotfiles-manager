@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -99,11 +100,17 @@ func chapterAI(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config
 // when the user supplied a token outright; the caller writes it to the
 // env file, never to config.toml.
 func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config, editMode bool) (bool, string, string, error) {
-	cleanURL, retainedToken, err := config.SplitAuthToken(cfg.State.URL)
-	if err != nil {
-		return false, "", "", err
+	var retainedToken string
+	scheme, _, _ := strings.Cut(strings.TrimSpace(cfg.State.URL), ":")
+	switch strings.ToLower(scheme) {
+	case "libsql", "https", "http", "wss", "ws":
+		cleanURL, token, err := config.SplitAuthToken(cfg.State.URL)
+		if err != nil {
+			return false, "", "", err
+		}
+		cfg.State.URL = cleanURL
+		retainedToken = token
 	}
-	cfg.State.URL = cleanURL
 	if retainedToken != "" && opts.TursoAuthToken != "" {
 		retainedToken = opts.TursoAuthToken
 	}
@@ -170,9 +177,6 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	}
 	if url == "" && retainedToken != "" {
 		url = cfg.State.URL
-		if token == "" {
-			token = retainedToken
-		}
 	}
 	url, embedded, err := config.SplitAuthToken(url)
 	if err != nil {
@@ -183,6 +187,9 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	}
 	if token == "" {
 		token = os.Getenv("TURSO_AUTH_TOKEN")
+	}
+	if token == "" && retainedToken != "" && sameStateEndpoint(url, cfg.State.URL) {
+		token = retainedToken
 	}
 
 	// Non-interactive paths: if either url+token came in via env/flags
@@ -252,6 +259,15 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	cfg.State.URL = urlAns
 	cfg.State.AuthToken = tokAns
 	return false, dbName, tokAns, nil
+}
+
+func sameStateEndpoint(a, b string) bool {
+	first, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	second, err := url.Parse(b)
+	return err == nil && first.Scheme == second.Scheme && first.Host == second.Host && first.Path == second.Path
 }
 
 // chapterRepo collects the backup-repo settings. It does NOT clone or

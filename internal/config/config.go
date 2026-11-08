@@ -394,7 +394,7 @@ func ScrubURL(u string) string {
 	trimmed := strings.TrimSpace(u)
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" {
-		for _, prefix := range []string{"libsql://", "https://", "http://", "wss://", "ws://"} {
+		for _, prefix := range []string{"libsql:", "https:", "http:", "wss:", "ws:"} {
 			if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
 				return "<redacted remote URL>"
 			}
