@@ -23,13 +23,13 @@ func openTestDB(t *testing.T) (context.Context, *sql.DB, func()) {
 	dbPath := filepath.Join(dir, "state.db")
 	cfg := &config.Config{State: config.StateConfig{URL: "file://" + dbPath}}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	db, _, err := Open(ctx, cfg)
+	s, _, err := Open(ctx, cfg)
 	if err != nil {
 		cancel()
 		t.Fatalf("Open: %v", err)
 	}
-	return ctx, db, func() {
-		_ = db.Close()
+	return ctx, s.DB(), func() {
+		_ = s.Close()
 		cancel()
 	}
 }
@@ -102,23 +102,32 @@ func TestRunMigrations_DebugLevel_RoutesGooseToDlog(t *testing.T) {
 	}
 }
 
-func TestCurrentDBVersionBefore_FreshDBReturnsZero(t *testing.T) {
+func TestPreMigrationVersion_FreshDBReturnsZero(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	cfg := &config.Config{State: config.StateConfig{URL: "file://" + dbPath}}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	v, err := CurrentDBVersionBefore(ctx, cfg)
+	s, err := New(ctx, cfg)
 	if err != nil {
-		t.Fatalf("CurrentDBVersionBefore: %v", err)
+		t.Fatalf("New: %v", err)
 	}
+	defer s.Close()
+	v := s.PreMigrationVersion()
 	if v != 0 {
 		t.Errorf("fresh DB version = %d, want 0", v)
 	}
+	after, err := CurrentDBVersion(ctx, s.DB())
+	if err != nil || after < 1 {
+		t.Fatalf("migrated version = %d, err = %v; want >= 1", after, err)
+	}
+	if got := s.SharedRef().PreMigrationVersion(); got != v {
+		t.Errorf("shared pre-migration version = %d, want %d", got, v)
+	}
 }
 
-func TestCurrentDBVersionBefore_AfterMigrationsReturnsLatest(t *testing.T) {
+func TestPreMigrationVersion_AfterMigrationsReturnsLatest(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	cfg := &config.Config{State: config.StateConfig{URL: "file://" + dbPath}}
@@ -126,27 +135,55 @@ func TestCurrentDBVersionBefore_AfterMigrationsReturnsLatest(t *testing.T) {
 	defer cancel()
 
 	// Apply migrations via a separate handle, then peek.
-	db, _, err := Open(ctx, cfg)
+	s, _, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := RunMigrations(ctx, db); err != nil {
-		_ = db.Close()
+	if err := RunMigrations(ctx, s.DB()); err != nil {
+		_ = s.Close()
 		t.Fatalf("RunMigrations: %v", err)
 	}
-	want, err := CurrentDBVersion(ctx, db)
+	want, err := CurrentDBVersion(ctx, s.DB())
 	if err != nil {
-		_ = db.Close()
+		_ = s.Close()
 		t.Fatalf("CurrentDBVersion: %v", err)
 	}
-	_ = db.Close()
+	_ = s.Close()
 
-	got, err := CurrentDBVersionBefore(ctx, cfg)
+	s, err = New(ctx, cfg)
 	if err != nil {
-		t.Fatalf("CurrentDBVersionBefore: %v", err)
+		t.Fatalf("New: %v", err)
 	}
+	defer s.Close()
+	got := s.PreMigrationVersion()
 	if got != want {
 		t.Errorf("peeked version = %d, want %d", got, want)
+	}
+}
+
+func TestPreMigrationVersion_PendingMigrations(t *testing.T) {
+	cfg := &config.Config{State: config.StateConfig{URL: "file://" + filepath.Join(t.TempDir(), "state.db")}}
+	ctx := context.Background()
+	s, _, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := RunGoose(ctx, s.DB(), "up-to", "1"); err != nil {
+		_ = s.Close()
+		t.Fatalf("RunGoose: %v", err)
+	}
+	_ = s.Close()
+	s, err = New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer s.Close()
+	if got := s.PreMigrationVersion(); got != 1 {
+		t.Errorf("pre-migration version = %d, want 1", got)
+	}
+	after, err := CurrentDBVersion(ctx, s.DB())
+	if err != nil || after <= 1 {
+		t.Errorf("migrated version = %d, err = %v; want > 1", after, err)
 	}
 }
 
