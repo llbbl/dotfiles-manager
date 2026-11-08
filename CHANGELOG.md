@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.12] - 2026-11-08
+
+### Bug Fixes
+
+- Push and pull remote state in remote mode (#109)
 ## [1.13.11] - 2026-11-07
 
 ### Bug Fixes
