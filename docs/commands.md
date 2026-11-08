@@ -540,8 +540,10 @@ Flags: `--dry-run`, `--json`.
 ## State database
 
 With a remote Turso state store, dfm pulls into its local replica before applying
-migrations and pushes when the store closes. A failed pull warns on stderr and
-continues with the cached replica. A failed push exits non-zero with "changes
+migrations and pushes when the store closes. A pull that fails quickly (for
+example, when offline) warns on stderr and continues with the local replica.
+A pull that times out after 30 seconds fails the command.
+A failed push exits non-zero with "changes
 saved locally but not pushed to <scheme://host>"; those changes remain on disk
 and push on the next command that completes successfully. Concurrent edits to the
 same row use last-push-wins. This state synchronization is separate from

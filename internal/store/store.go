@@ -25,7 +25,7 @@ import (
 )
 
 // Remote pulls and final pushes are bounded to 30 seconds.
-const remoteSyncTimeout = 30 * time.Second
+var remoteSyncTimeout = 30 * time.Second
 
 // Store is a handle around an open *sql.DB.
 type Store struct {
@@ -138,7 +138,9 @@ func open(ctx context.Context, cfg *config.Config) (*Store, string, error) {
 		if err := ensureParentDir(cachePath); err != nil {
 			return nil, "", err
 		}
-		syncDB, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
+		bootCtx, cancelBoot := context.WithTimeout(ctx, remoteSyncTimeout)
+		defer cancelBoot()
+		syncDB, err := turso.NewTursoSyncDb(bootCtx, turso.TursoSyncDbConfig{
 			Path:       cachePath,
 			RemoteUrl:  raw,
 			AuthToken:  token,
@@ -154,6 +156,12 @@ func open(ctx context.Context, cfg *config.Config) (*Store, string, error) {
 		pullCtx, cancel := context.WithTimeout(ctx, remoteSyncTimeout)
 		defer cancel()
 		if _, err := syncDB.Pull(pullCtx); err != nil {
+			// A pull abandoned at its deadline leaves the sync handle unable to connect, so
+			// only a pull that failed on its own (for example offline) falls back to the replica.
+			if errors.Is(err, context.DeadlineExceeded) {
+				_ = db.Close()
+				return nil, "", fmt.Errorf("pull from %s: %w", scrub(raw), &remoteOperationError{cause: err})
+			}
 			fmt.Fprintf(os.Stderr, "warning: could not pull from %s: %v; using local replica\n",
 				scrub(raw), &remoteOperationError{cause: err})
 		}
@@ -175,7 +183,9 @@ func open(ctx context.Context, cfg *config.Config) (*Store, string, error) {
 // for errors.Is/As while keeping their text out of diagnostics.
 type remoteOperationError struct{ cause error }
 
-var remoteHTTPStatus = regexp.MustCompile(`(?i)\b(?:http(?:/\d(?:\.\d)?)?(?: status(?: code)?)?|status(?: code)?)(?:\s*[:=]\s*|\s+)([1-5][0-9]{2})\b`)
+// Only a complete 4xx/5xx token after "status" or "HTTP" counts, so numbers from
+// row data or byte counts (401.75, 401,250, 123-456) are never reported as a status.
+var remoteHTTPStatus = regexp.MustCompile(`(?i)(?:\bstatus(?:\s+code)?\s*[:=]\s*|\bhttp(?:/\d(?:\.\d)?)?\s+(?:status(?:\s+code)?\s*:?\s*)?)([45][0-9]{2})(?:$|[\s);\]])`)
 
 func (e *remoteOperationError) Error() string {
 	if status := remoteHTTPStatus.FindStringSubmatch(e.cause.Error()); len(status) == 2 {

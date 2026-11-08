@@ -78,9 +78,11 @@ It is not — it is sitting in the other backend. Check which one is active
 (`[state].url` in the config file) before diagnosing anything as missing data.
 
 Remote state pulls before migrations and pushes when its owning store closes,
-after the audit logger. A pull failure warns and continues with the local replica;
-a push failure exits non-zero, saying the changes are saved locally and push on
-the next command that completes successfully. Conflicts use last-push-wins per row. Diagnostics show only
+after the audit logger. A pull that fails quickly (for example, when offline)
+warns on stderr and continues with the local replica. A pull that times out after
+30 seconds fails the command. A push failure exits non-zero, saying the changes
+are saved locally and push on the next command that completes successfully.
+Conflicts use last-push-wins per row. Diagnostics show only
 `scheme://host`. This is separate from the backup Git repository's `dfm sync`.
 
 When upgrading from a version without remote pushes, one machine needs no

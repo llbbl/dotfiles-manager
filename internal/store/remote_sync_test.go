@@ -5,9 +5,14 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +40,10 @@ func TestRemoteOperationError_SafeCause(t *testing.T) {
 		{"too many digits", "HTTP 4010 token-secret", "remote operation failed"},
 		{"too few digits", "HTTP 40 token-secret", "remote operation failed"},
 		{"invalid status", "HTTP 999 token-secret", "remote operation failed"},
+		{"decimal continuation", "HTTP 401.75 bytes read", "remote operation failed"},
+		{"comma continuation", "status code: 401,250 rows", "remote operation failed"},
+		{"skips non-status field", "status=123-456 row identifier; HTTP 503", "remote operation failed (HTTP 503)"},
+		{"driver format", "sync engine operation failed: status=404", "remote operation failed (HTTP 404)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cause := errors.New(tc.cause)
@@ -206,5 +215,110 @@ func TestRemoteSync_RoundTrip(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("replica B has %d matching actions, want 1", count)
+	}
+}
+
+// A server that accepts requests but never answers must fail Open within the
+// sync bound instead of hanging, whether the stall hits bootstrap or pull.
+func TestOpen_StalledServerFailsWithinBound(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	t.Setenv("HOME", t.TempDir())
+
+	old := remoteSyncTimeout
+	remoteSyncTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { remoteSyncTimeout = old })
+
+	cfg := &config.Config{State: config.StateConfig{URL: srv.URL, AuthToken: "stall-token"}}
+	done := make(chan error, 1)
+	go func() {
+		s, _, err := Open(context.Background(), cfg)
+		if err == nil {
+			_ = s.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Open against a stalled server succeeded, want an error")
+		}
+		if strings.Contains(err.Error(), "stall-token") {
+			t.Errorf("error leaks the token: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Open hung against a stalled server")
+	}
+}
+
+// An existing replica whose pull stalls must fail Open within the bound: a pull
+// abandoned at its deadline leaves the sync handle unable to connect.
+func TestRemoteSync_StalledPullFailsWithinBound(t *testing.T) {
+	remoteURL, token := os.Getenv("DFM_TEST_TURSO_URL"), os.Getenv("DFM_TEST_TURSO_TOKEN")
+	if remoteURL == "" || token == "" {
+		t.Skip("set DFM_TEST_TURSO_URL and DFM_TEST_TURSO_TOKEN for a disposable Turso database")
+	}
+	upstream, err := url.Parse(strings.Replace(remoteURL, "libsql://", "https://", 1))
+	if err != nil {
+		t.Fatal("parse test URL")
+	}
+	var stall atomic.Bool
+	release := make(chan struct{})
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(upstream)
+			r.Out.Host = upstream.Host
+		},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			http.Error(w, "test proxy request failed", http.StatusBadGateway)
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if stall.Load() {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := &config.Config{State: config.StateConfig{URL: srv.URL, AuthToken: token}}
+	s, _, err := Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatal("seed replica through proxy failed")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal("close seeded replica failed")
+	}
+
+	old := remoteSyncTimeout
+	remoteSyncTimeout = time.Second
+	t.Cleanup(func() { remoteSyncTimeout = old })
+	stall.Store(true)
+	done := make(chan error, 1)
+	go func() {
+		s, _, err := Open(context.Background(), cfg)
+		// A returned store is the failure; it is left unclosed because the wedged
+		// handle would block Close.
+		_ = s
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Open after a stalled pull returned a store, want an error")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Open hung after a stalled pull")
 	}
 }
