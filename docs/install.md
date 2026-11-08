@@ -111,6 +111,24 @@ dfm --help          # full command surface
 
 `dfm init` writes `~/.config/dotfiles/config.toml` and provisions the private backup repo. Flags and the non-interactive path are in [Commands](./commands.md#dfm-init). An [example config](../config.example.toml) ships in the source tree if you would rather write it by hand.
 
+To keep the Turso auth token in [lsm](https://github.com/llbbl/lsm), install and
+initialize lsm separately, then select `--secret-store lsm` during setup:
+
+```sh
+dfm init --turso-url libsql://your-database.turso.io --secret-store lsm --yes
+```
+
+Supply the token through `TURSO_AUTH_TOKEN` or `--turso-auth-token`. The default
+lsm app and environment are `dfm` / `prod`; override them with `--lsm-app` and
+`--lsm-env`. Interactive setup offers lsm by default when it is on PATH; EOF without an
+answer keeps env storage. The selection also applies when `--turso` provisions a
+database and mints its token. Setup
+sends the token through stdin, saves only a `[state.secret]` reference, and removes
+an existing plaintext token from the data env file after both saves succeed.
+A failed lsm write stops setup without a plaintext fallback. An exported runtime
+`TURSO_AUTH_TOKEN` overrides the reference. No `lsm exec` wrapper is needed.
+See [init options](./commands.md#dfm-init) for preview and failure behavior.
+
 To pin the AI model used by `dfm suggest` and `dfm ask`:
 
 ```toml

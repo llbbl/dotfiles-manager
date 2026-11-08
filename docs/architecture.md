@@ -43,6 +43,26 @@ Tables today:
 
 `internal/config` loads `~/.config/dotfiles/config.toml`, applies env overrides (notably `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `DFM_LOG_*`), and exposes the result via context to every command.
 
+### State token resolution
+
+`[state.secret]` holds a non-secret reference: `provider = "lsm"`, an explicit
+`app` and `env`, and an optional `key` defaulting to `TURSO_AUTH_TOKEN`.
+Configuration loading never shells out. `internal/store` resolves the reference
+through `internal/lsmsecret` only when opening remote state without an environment
+token; dotenv-loaded tokens have the same precedence as other environment values.
+The adapter invokes `lsm get` directly, with a 10-second timeout, keeps stdout
+exactly as returned, and discards stderr. Errors never include subprocess output.
+
+During init, `--secret-store lsm` sends the token to `lsm set` through stdin without
+a trailing newline for both supplied and provisioned tokens. Setup saves the
+reference only after lsm succeeds, then
+atomically removes plaintext token assignments from the data env file (0600).
+Failures do not fall back to that file. Preview mode makes no subprocess calls;
+edit mode preserves references. Default non-interactive storage remains the env
+file; an unanswered EOF prompt keeps that default. Migration of legacy config-file
+tokens still uses the env-file path. Subprocess pipe cleanup is also bounded so
+a descendant inheriting stdout or stderr cannot hold up a timed-out lookup.
+
 ## Tracker: `internal/tracker`
 
 Resolves user-supplied paths to canonical absolute form, rejects directories and system paths (`/etc`, `/usr`, `/var`, `/System`, `/Library`, with temp dirs exempted), refuses symlinks that escape `$HOME` / cwd / tmp roots, and persists `tracked_files` rows. The secrets pre-flight (see below) runs before any row is inserted.

@@ -131,11 +131,27 @@ Command-specific codes are documented per command in `docs/commands.md`.
 
 `dfm init --state turso --turso-url <url>` accepts an existing database URL.
 An embedded `authToken`, `auth_token`, or `token` query parameter is removed from
-the URL and moved to the env file when writing, never to `config.toml`;
+the URL and saved to the selected secret store when writing, never to `config.toml`;
 `--turso-auth-token` takes precedence. With `--print`, no files are written and
 the preview omits the token.
 Retained configuration URLs and environment overrides receive the same treatment.
 Malformed URLs stop setup with `invalid Turso URL` before they are displayed or written.
+
+Use `--secret-store lsm` to keep the token in lsm rather than the default data env
+file. Set `--lsm-app` and `--lsm-env` if the defaults `dfm` / `prod` do not fit.
+Interactive init offers lsm with a default-yes prompt when it is available; an
+explicit `--secret-store env` skips the prompt. Non-interactive init requires
+`--secret-store lsm` to select it. EOF without an answer keeps env storage.
+The chosen store applies to tokens minted by `--turso` as well as supplied tokens.
+
+Init sends the token on stdin to lsm, saves only `[state.secret]`, then removes any
+plaintext token from the data env file. Failed lsm writes stop without changing
+the reference or env file; there is no plaintext fallback. `--print` shows the
+reference and calls nothing. Edit mode keeps an existing reference. At runtime,
+`TURSO_AUTH_TOKEN` (including dotenv) overrides lsm; only remote state opens resolve
+the reference, with a 10-second timeout. Never retrieve or print the token to
+verify setup; inspect the reference and safe errors instead. Existing env-file
+tokens are not automatically migrated into lsm.
 
 ### Start managing a file
 

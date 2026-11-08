@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,12 +13,19 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/envfile"
+	"github.com/llbbl/dotfiles-manager/internal/lsmsecret"
 )
 
 // Options bundles the non-interactive overrides + the I/O streams the
 // wizard speaks through. Zero values are valid: the wizard prompts for
 // anything not overridden.
 type Options struct {
+	Context             context.Context
+	SecretStore         string
+	SecretStoreExplicit bool
+	LSMApp              string
+	LSMEnv              string
+
 	// ConfigPath is the file the wizard intends to write. Empty means
 	// "use config.DefaultPath()".
 	ConfigPath string
@@ -61,7 +69,7 @@ type Options struct {
 // Plan is what Run returns: the chosen config plus any side-effect
 // intents the cobra layer must execute (provision a Turso DB, init the
 // backup repo, run `dfm track`, etc.). The wizard itself only writes
-// the config file and the env file (both 0600) and never shells out.
+// the config file and credentials in the selected secret store.
 type Plan struct {
 	// Config is the fully-populated *config.Config the wizard wrote (or
 	// would write, in --print mode).
@@ -79,6 +87,7 @@ type Plan struct {
 	// should run `runTursoInit` to create the DB.
 	ProvisionTurso bool
 	TursoDBName    string
+	SecretRef      *config.SecretRef
 
 	// RepoFlow is true when chapter 4 produced a non-empty remote and
 	// the cobra layer should run the existing repo-init flow.
@@ -101,6 +110,22 @@ type Plan struct {
 // !opts.Force, the wizard runs in "edit mode": each chapter pre-fills
 // the existing value as the Enter default.
 func Run(opts Options, existing *config.Config) (*Plan, error) {
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
+	if opts.SecretStore == "" {
+		opts.SecretStore = "env"
+	}
+	if opts.SecretStore != "env" && opts.SecretStore != "lsm" {
+		return nil, errors.New("secret-store must be lsm or env")
+	}
+	if opts.LSMApp == "" {
+		opts.LSMApp = "dfm"
+	}
+	if opts.LSMEnv == "" {
+		opts.LSMEnv = "prod"
+	}
+
 	if opts.In == nil {
 		opts.In = strings.NewReader("")
 	}
@@ -147,6 +172,24 @@ func Run(opts Options, existing *config.Config) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	var secretRef *config.SecretRef
+	if bakedToken != "" || provisionTurso {
+		if !opts.Yes && !opts.Print && !opts.SecretStoreExplicit && opts.SecretStore != "lsm" {
+			if _, err := exec.LookPath("lsm"); err == nil {
+				ok, err := askLSM(in, opts.Out, opts.LSMApp, opts.LSMEnv)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					opts.SecretStore = "lsm"
+				}
+			}
+		}
+		if opts.SecretStore == "lsm" {
+			secretRef = &config.SecretRef{Provider: "lsm", App: opts.LSMApp, Env: opts.LSMEnv, Key: "TURSO_AUTH_TOKEN"}
+		}
+	}
+	plan.SecretRef = secretRef
 	plan.ProvisionTurso = provisionTurso
 	plan.TursoDBName = dbName
 
@@ -169,6 +212,9 @@ func Run(opts Options, existing *config.Config) (*Plan, error) {
 
 	// Persist the config (or print it).
 	if opts.Print {
+		if secretRef != nil {
+			cfg.State.Secret = secretRef
+		}
 		// --print previews the file that would be written, and that file
 		// never holds auth_token. Emitting it here would both print a
 		// credential and show a preview the write path contradicts.
@@ -182,33 +228,55 @@ func Run(opts Options, existing *config.Config) (*Plan, error) {
 			return nil, err
 		}
 	} else {
-		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
-			return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(cfgPath), err)
-		}
-		// cfg can carry a token Load overlaid from the environment, so
-		// it never goes to disk via EncodeTOML — only through the guard.
-		migrated, envPath, err := config.SaveKeepingFileToken(cfgPath, cfg)
-		if err != nil {
+		if err := SaveStateToken(opts.Context, cfgPath, cfg, bakedToken, secretRef, opts.Out); err != nil {
 			return nil, err
 		}
 		plan.ConfigWritten = true
-		if migrated {
-			fmt.Fprint(opts.Out, config.TokenMigrationNotice(envPath))
-		}
-		// A token the user supplied outright lands in the env file,
-		// after the guard so it wins over any older migrated value.
-		if bakedToken != "" {
-			if err := envfile.SetKey(envPath, "TURSO_AUTH_TOKEN", bakedToken); err != nil {
-				return nil, err
-			}
-			fmt.Fprintf(opts.Out, "  auth token written to %s (0600)\n", envPath)
-		}
 	}
 
 	// ---- Chapter 6: summary ---------------------------------------
 	plan.Tip = chapterSummary(opts.Out, plan, opts)
 
 	return plan, nil
+}
+
+// SaveStateToken saves credentials before their reference, then removes plaintext.
+// A nil reference retains env-file storage and the legacy config-token migration.
+func SaveStateToken(ctx context.Context, cfgPath string, cfg *config.Config, token string, ref *config.SecretRef, out io.Writer) error {
+	if token != "" && ref != nil {
+		if err := lsmsecret.Set(ctx, *ref, token); err != nil {
+			return err
+		}
+		cfg.State.Secret = ref
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(cfgPath), err)
+	}
+	migrated, envPath, err := config.SaveKeepingFileToken(cfgPath, cfg)
+	if err != nil {
+		return err
+	}
+	if migrated {
+		fmt.Fprint(out, config.TokenMigrationNotice(envPath))
+	}
+	if token == "" {
+		return nil
+	}
+	if ref != nil {
+		removed, err := envfile.DeleteKey(envPath, "TURSO_AUTH_TOKEN")
+		if err != nil {
+			return err
+		}
+		if removed {
+			fmt.Fprintf(out, "removed plaintext token from %s\n", envPath)
+		}
+	} else {
+		if err := envfile.SetKey(envPath, "TURSO_AUTH_TOKEN", token); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "  auth token written to %s (0600)\n", envPath)
+	}
+	return nil
 }
 
 // LoadExisting is a small convenience for callers: returns the on-disk

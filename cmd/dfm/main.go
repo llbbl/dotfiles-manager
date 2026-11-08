@@ -181,7 +181,15 @@ func newRootCmd() *cobra.Command {
 			// Best-effort: build an audit Logger backed by libSQL. If the
 			// store can't open (e.g. `dfm config` before init), keep
 			// the default unset and let callers no-op.
-			s, serr := store.New(c.Context(), cfg)
+			auditCfg := cfg
+			preview, _ := c.Flags().GetBool("print")
+			if c.Name() == "version" || (c.Parent() != nil && c.Parent().Name() == "config") || (c.Name() == "init" && preview) {
+				// Keep audit startup without resolving credentials for inspection or preview.
+				copy := *cfg
+				copy.State.Secret = nil
+				auditCfg = &copy
+			}
+			s, serr := store.New(c.Context(), auditCfg)
 			if serr != nil {
 				return nil
 			}

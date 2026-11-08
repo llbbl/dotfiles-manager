@@ -314,3 +314,47 @@ func TestRedacted_EmptyTokenStaysAbsent(t *testing.T) {
 		t.Errorf("auth_token key should be omitted when unset:\n%s", b)
 	}
 }
+
+func TestSecretRef(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, app, env, key string
+		invalid                       bool
+	}{
+		{name: "default key", provider: "lsm", app: "dfm", env: "prod"},
+		{name: "custom key", provider: "lsm", app: "custom", env: "dev", key: "CUSTOM"},
+		{name: "provider", provider: "other", app: "dfm", env: "prod", invalid: true},
+		{name: "app", provider: "lsm", env: "prod", invalid: true},
+		{name: "env", provider: "lsm", app: "dfm", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TURSO_AUTH_TOKEN", "")
+			cfg := Defaults()
+			cfg.State.Secret = &SecretRef{Provider: tc.provider, App: tc.app, Env: tc.env, Key: tc.key}
+			err := cfg.Validate()
+			if (err != nil) != tc.invalid {
+				t.Fatal("unexpected validation result")
+			}
+			if tc.invalid {
+				return
+			}
+			want := tc.key
+			if want == "" {
+				want = "TURSO_AUTH_TOKEN"
+			}
+			if cfg.State.Secret.Key != want {
+				t.Error("key default missing")
+			}
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.State.Secret == nil || *loaded.State.Secret != *cfg.State.Secret {
+				t.Error("reference did not round-trip")
+			}
+		})
+	}
+}

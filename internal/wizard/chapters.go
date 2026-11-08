@@ -117,7 +117,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 
 	// Resolve the branch (local vs turso) up front.
 	branch := strings.ToLower(opts.State)
-	if branch == "" && opts.Turso {
+	if branch == "" && (opts.Turso || opts.TursoURL != "" || opts.TursoAuthToken != "") {
 		branch = "turso"
 	}
 
@@ -196,7 +196,9 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	// AND user said --yes (or --turso non-interactively), bake.
 	if opts.Yes || opts.Turso || opts.TursoURL != "" || opts.TursoAuthToken != "" {
 		if url != "" && token != "" {
-			fmt.Fprintln(out, "  Note: the auth token goes to the env file, not config.toml.")
+			if opts.SecretStore != "lsm" {
+				fmt.Fprintln(out, "  Note: the auth token goes to the env file unless lsm is selected, not config.toml.")
+			}
 			cfg.State.URL = url
 			cfg.State.AuthToken = token
 			return false, dbName, token, nil
@@ -213,7 +215,9 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 			return false, "", "", err
 		}
 		if ok {
-			fmt.Fprintln(out, "  Note: the auth token goes to the env file, not config.toml.")
+			if opts.SecretStore != "lsm" {
+				fmt.Fprintln(out, "  Note: the auth token goes to the env file unless lsm is selected, not config.toml.")
+			}
 			cfg.State.URL = url
 			cfg.State.AuthToken = token
 			return false, dbName, token, nil
@@ -255,7 +259,9 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	if err != nil {
 		return false, "", "", err
 	}
-	fmt.Fprintln(out, "  Note: the auth token goes to the env file, not config.toml.")
+	if opts.SecretStore != "lsm" {
+		fmt.Fprintln(out, "  Note: the auth token goes to the env file unless lsm is selected, not config.toml.")
+	}
 	cfg.State.URL = urlAns
 	cfg.State.AuthToken = tokAns
 	return false, dbName, tokAns, nil
@@ -347,4 +353,18 @@ func chapterSummary(out io.Writer, plan *Plan, opts Options) string {
 	}
 	fmt.Fprintf(out, "Next: %s\n", tip)
 	return tip
+}
+
+// An empty answer requires an actual newline; EOF never opts into secret storage.
+func askLSM(in *bufio.Reader, out io.Writer, app, env string) (bool, error) {
+	fmt.Fprintf(out, "Store the auth token in lsm (app %s, env %s)? [Y/n]: ", app, env)
+	line, err := in.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if err == io.EOF && answer == "" {
+		return false, nil
+	}
+	return answer == "" || answer == "y" || answer == "yes", nil
 }
