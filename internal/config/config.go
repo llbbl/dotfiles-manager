@@ -362,16 +362,43 @@ func (c *Config) Redacted() *Config {
 	// store trims the URL before using it, so a value with stray
 	// whitespace still works at runtime — and would parse to an empty
 	// Host here and pass through with its query string intact.
-	out.State.URL = scrubURL(strings.TrimSpace(out.State.URL))
+	out.State.URL = ScrubURL(strings.TrimSpace(out.State.URL))
 	return &out
 }
 
-// scrubURL keeps a URL to scheme://host. An unparseable or host-less URL
-// passes through unchanged so file:///... paths stay readable. Duplicated
-// from internal/store rather than exported: store imports this package.
-func scrubURL(u string) string {
-	parsed, err := url.Parse(u)
+// SplitAuthToken removes credential query parameters and returns the first
+// non-empty value in authToken, auth_token, token order. Invalid URLs return
+// empty values and an error that never includes the input.
+func SplitAuthToken(raw string) (clean, token string, err error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", "", errors.New("invalid Turso URL")
+	}
+	q := u.Query()
+	for _, key := range []string{"authToken", "auth_token", "token"} {
+		for _, value := range q[key] {
+			if token == "" && value != "" {
+				token = value
+			}
+		}
+		q.Del(key)
+	}
+	u.RawQuery = q.Encode()
+	u.ForceQuery = false
+	return u.String(), token, nil
+}
+
+// ScrubURL limits remote URLs to scheme://host, hiding malformed remote
+// input entirely. Local file paths stay readable.
+func ScrubURL(u string) string {
+	trimmed := strings.TrimSpace(u)
+	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" {
+		for _, prefix := range []string{"libsql:", "https:", "http:", "wss:", "ws:"} {
+			if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+				return "<redacted remote URL>"
+			}
+		}
 		return u
 	}
 	return parsed.Scheme + "://" + parsed.Host

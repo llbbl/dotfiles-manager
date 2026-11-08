@@ -172,7 +172,7 @@ func openSourceDB(ctx context.Context, fromURL string) (*store.Store, string, er
 	// URL query string for remote sources so users can pass
 	// libsql://host?authToken=... directly.
 	srcCfg := &config.Config{State: config.StateConfig{URL: fromURL}}
-	if tok := extractAuthToken(fromURL); tok != "" {
+	if _, tok, err := config.SplitAuthToken(fromURL); err == nil && tok != "" {
 		srcCfg.State.AuthToken = tok
 	}
 	db, target, err := store.Open(ctx, srcCfg)
@@ -216,23 +216,6 @@ func (e *stateSourceOpenError) Error() string {
 }
 
 func (e *stateSourceOpenError) Unwrap() error { return e.cause }
-
-// extractAuthToken pulls authToken from the query string of a URL
-// (case-insensitive on the key). Returns "" if absent or
-// unparseable.
-func extractAuthToken(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	q := u.Query()
-	for _, k := range []string{"authToken", "auth_token", "token"} {
-		if v := q.Get(k); v != "" {
-			return v
-		}
-	}
-	return ""
-}
 
 func emitImportResult(c *cobra.Command, res stateimport.Result, asJSON bool) error {
 	out := c.OutOrStdout()

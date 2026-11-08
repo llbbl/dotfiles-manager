@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -99,6 +100,21 @@ func chapterAI(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config
 // when the user supplied a token outright; the caller writes it to the
 // env file, never to config.toml.
 func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config, editMode bool) (bool, string, string, error) {
+	var retainedToken string
+	scheme, _, _ := strings.Cut(strings.TrimSpace(cfg.State.URL), ":")
+	switch strings.ToLower(scheme) {
+	case "libsql", "https", "http", "wss", "ws":
+		cleanURL, token, err := config.SplitAuthToken(cfg.State.URL)
+		if err != nil {
+			return false, "", "", err
+		}
+		cfg.State.URL = cleanURL
+		retainedToken = token
+	}
+	if retainedToken != "" && opts.TursoAuthToken != "" {
+		retainedToken = opts.TursoAuthToken
+	}
+
 	// Resolve the branch (local vs turso) up front.
 	branch := strings.ToLower(opts.State)
 	if branch == "" && opts.Turso {
@@ -145,7 +161,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 			cfg.State.URL = d.State.URL
 		}
 		cfg.State.AuthToken = ""
-		return false, "", "", nil
+		return false, "", retainedToken, nil
 	}
 
 	// Turso branch.
@@ -159,8 +175,21 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	if url == "" {
 		url = os.Getenv("TURSO_DATABASE_URL")
 	}
+	if url == "" && retainedToken != "" {
+		url = cfg.State.URL
+	}
+	url, embedded, err := config.SplitAuthToken(url)
+	if err != nil {
+		return false, "", "", err
+	}
+	if token == "" {
+		token = embedded
+	}
 	if token == "" {
 		token = os.Getenv("TURSO_AUTH_TOKEN")
+	}
+	if token == "" && retainedToken != "" && sameStateEndpoint(url, cfg.State.URL) {
+		token = retainedToken
 	}
 
 	// Non-interactive paths: if either url+token came in via env/flags
@@ -179,7 +208,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 
 	// Interactive: offer to bake env values if present.
 	if url != "" && token != "" {
-		ok, err := AskYesNo(in, out, fmt.Sprintf("Use TURSO_DATABASE_URL/AUTH_TOKEN from your environment (%s)?", url), true)
+		ok, err := AskYesNo(in, out, fmt.Sprintf("Use TURSO_DATABASE_URL/AUTH_TOKEN from your environment (%s)?", config.ScrubURL(url)), true)
 		if err != nil {
 			return false, "", "", err
 		}
@@ -205,6 +234,13 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	if err != nil {
 		return false, "", "", err
 	}
+	urlAns, embedded, err = config.SplitAuthToken(urlAns)
+	if err != nil {
+		return false, "", "", err
+	}
+	if embedded != "" && opts.TursoAuthToken == "" {
+		token = embedded
+	}
 	tokAns, err := AskLine(in, out, PromptOpts{
 		Question: "Turso auth token",
 		Default:  token,
@@ -223,6 +259,15 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	cfg.State.URL = urlAns
 	cfg.State.AuthToken = tokAns
 	return false, dbName, tokAns, nil
+}
+
+func sameStateEndpoint(a, b string) bool {
+	first, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	second, err := url.Parse(b)
+	return err == nil && first.Scheme == second.Scheme && first.Host == second.Host && first.Path == second.Path
 }
 
 // chapterRepo collects the backup-repo settings. It does NOT clone or

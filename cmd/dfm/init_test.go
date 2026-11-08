@@ -5,10 +5,42 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 )
+
+func TestInit_Print_URLToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("TURSO_DATABASE_URL", "")
+	t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+	prev := flagConfigPath
+	flagConfigPath = filepath.Join(home, "config.toml")
+	t.Cleanup(func() { flagConfigPath = prev })
+
+	cmd := newInitCmd()
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"--yes", "--state", "turso", "--turso-url", "libsql://h?authToken=SECRET-88", "--print"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal("init preview failed")
+	}
+	if strings.Contains(out.String(), "SECRET-88") {
+		t.Error("init preview contains the embedded token")
+	}
+	if !strings.Contains(out.String(), `url = "libsql://h"`) {
+		t.Error("init preview does not contain the cleaned state URL")
+	}
+	if _, err := os.Stat(flagConfigPath); !os.IsNotExist(err) {
+		t.Error("init preview wrote config.toml")
+	}
+}
 
 // TestInit_HappyPathFreshConfig drives the cobra `dfm init` command end
 // to end in non-interactive mode and verifies the wizard wrote a usable
