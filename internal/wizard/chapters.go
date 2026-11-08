@@ -99,6 +99,15 @@ func chapterAI(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config
 // when the user supplied a token outright; the caller writes it to the
 // env file, never to config.toml.
 func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Config, editMode bool) (bool, string, string, error) {
+	cleanURL, retainedToken, err := config.SplitAuthToken(cfg.State.URL)
+	if err != nil {
+		return false, "", "", err
+	}
+	cfg.State.URL = cleanURL
+	if retainedToken != "" && opts.TursoAuthToken != "" {
+		retainedToken = opts.TursoAuthToken
+	}
+
 	// Resolve the branch (local vs turso) up front.
 	branch := strings.ToLower(opts.State)
 	if branch == "" && opts.Turso {
@@ -145,7 +154,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 			cfg.State.URL = d.State.URL
 		}
 		cfg.State.AuthToken = ""
-		return false, "", "", nil
+		return false, "", retainedToken, nil
 	}
 
 	// Turso branch.
@@ -158,6 +167,19 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	token := opts.TursoAuthToken
 	if url == "" {
 		url = os.Getenv("TURSO_DATABASE_URL")
+	}
+	if url == "" && retainedToken != "" {
+		url = cfg.State.URL
+		if token == "" {
+			token = retainedToken
+		}
+	}
+	url, embedded, err := config.SplitAuthToken(url)
+	if err != nil {
+		return false, "", "", err
+	}
+	if token == "" {
+		token = embedded
 	}
 	if token == "" {
 		token = os.Getenv("TURSO_AUTH_TOKEN")
@@ -179,7 +201,7 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 
 	// Interactive: offer to bake env values if present.
 	if url != "" && token != "" {
-		ok, err := AskYesNo(in, out, fmt.Sprintf("Use TURSO_DATABASE_URL/AUTH_TOKEN from your environment (%s)?", url), true)
+		ok, err := AskYesNo(in, out, fmt.Sprintf("Use TURSO_DATABASE_URL/AUTH_TOKEN from your environment (%s)?", config.ScrubURL(url)), true)
 		if err != nil {
 			return false, "", "", err
 		}
@@ -204,6 +226,13 @@ func chapterState(in *bufio.Reader, out io.Writer, opts Options, cfg *config.Con
 	})
 	if err != nil {
 		return false, "", "", err
+	}
+	urlAns, embedded, err = config.SplitAuthToken(urlAns)
+	if err != nil {
+		return false, "", "", err
+	}
+	if embedded != "" && opts.TursoAuthToken == "" {
+		token = embedded
 	}
 	tokAns, err := AskLine(in, out, PromptOpts{
 		Question: "Turso auth token",

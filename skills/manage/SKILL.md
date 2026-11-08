@@ -127,6 +127,16 @@ Command-specific codes are documented per command in `docs/commands.md`.
 
 ## Common workflows
 
+### Initialize remote state
+
+`dfm init --state turso --turso-url <url>` accepts an existing database URL.
+An embedded `authToken`, `auth_token`, or `token` query parameter is removed from
+the URL and moved to the env file when writing, never to `config.toml`;
+`--turso-auth-token` takes precedence. With `--print`, no files are written and
+the preview omits the token.
+Retained configuration URLs and environment overrides receive the same treatment.
+Malformed URLs stop setup with `invalid Turso URL` before they are displayed or written.
+
 ### Start managing a file
 
 ```sh

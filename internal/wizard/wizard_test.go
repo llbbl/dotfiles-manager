@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -9,6 +10,246 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 )
+
+func TestWizard_URLToken_Print(t *testing.T) {
+	t.Setenv("TURSO_DATABASE_URL", "")
+	t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+	plan, out, err := runWizard(t, "", Options{
+		Yes: true, State: "turso", Print: true,
+		TursoURL: "libsql://h?authToken=SECRET-88",
+	}, nil)
+	if err != nil {
+		t.Fatal("wizard failed")
+	}
+	if strings.Contains(out, "SECRET-88") {
+		t.Error("preview contains the embedded token")
+	}
+	if !strings.Contains(out, `url = "libsql://h"`) {
+		t.Error("preview does not contain the cleaned state URL")
+	}
+	if plan.Config.State.AuthToken != "SECRET-88" || plan.ProvisionTurso {
+		t.Error("embedded token was not used for the existing remote")
+	}
+}
+
+func TestWizard_URLToken_Write(t *testing.T) {
+	t.Setenv("TURSO_DATABASE_URL", "")
+	t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+	plan, out, err := runWizard(t, "", Options{
+		Yes: true, State: "turso", TursoURL: "libsql://h?authToken=SECRET-88",
+	}, nil)
+	if err != nil {
+		t.Fatal("wizard failed")
+	}
+	raw, err := os.ReadFile(plan.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("SECRET-88")) || bytes.Contains(raw, []byte("auth_token")) {
+		t.Error("config.toml contains a credential")
+	}
+	if strings.Contains(out, "SECRET-88") {
+		t.Error("wizard output contains the embedded token")
+	}
+	if !plan.ConfigWritten || plan.ProvisionTurso || plan.Config.State.URL != "libsql://h" {
+		t.Error("wizard did not write the cleaned existing remote")
+	}
+	if plan.Config.State.AuthToken != "SECRET-88" {
+		t.Error("returned token differs from the embedded token")
+	}
+	env, err := os.ReadFile(envFilePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(env), "TURSO_AUTH_TOKEN=SECRET-88\n") {
+		t.Error("embedded token did not reach the env file")
+	}
+}
+
+func TestWizard_URLToken_FlagPrecedence(t *testing.T) {
+	pinHome(t)
+	t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+	cfg := config.Defaults()
+	provision, _, token, err := chapterState(bufio.NewReader(strings.NewReader("")), &bytes.Buffer{}, Options{
+		Yes: true, State: "turso", TursoURL: "libsql://h?authToken=SECRET-88", TursoAuthToken: "FLAG",
+	}, cfg, false)
+	if err != nil {
+		t.Fatal("state chapter failed")
+	}
+	if token != "FLAG" || cfg.State.AuthToken != "FLAG" {
+		t.Error("flag token did not take precedence")
+	}
+	if provision || cfg.State.URL != "libsql://h" {
+		t.Error("flag token path did not retain a cleaned existing remote")
+	}
+}
+
+func TestWizard_URLToken_Confirm(t *testing.T) {
+	pinHome(t)
+	t.Setenv("TURSO_DATABASE_URL", "libsql://h/private?authToken=SECRET-88&mode=read#fragment")
+	t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	provision, _, token, err := chapterState(bufio.NewReader(strings.NewReader("y\n")), &out, Options{State: "turso"}, cfg, false)
+	if err != nil {
+		t.Fatal("state chapter failed")
+	}
+	want := "Use TURSO_DATABASE_URL/AUTH_TOKEN from your environment (libsql://h)? [Y/n]: "
+	if !strings.HasPrefix(out.String(), want) || strings.Contains(out.String(), "SECRET-88") {
+		t.Error("confirmation did not show only the URL scheme and host")
+	}
+	if provision || token != "SECRET-88" {
+		t.Error("confirmation did not accept the embedded token")
+	}
+}
+
+func TestWizard_URLToken_CompletePair(t *testing.T) {
+	t.Setenv("TURSO_AUTH_TOKEN", "")
+	for _, source := range []string{"flag", "environment"} {
+		t.Run(source, func(t *testing.T) {
+			opts := Options{Yes: true, State: "turso", Print: true}
+			t.Setenv("TURSO_DATABASE_URL", "")
+			if source == "flag" {
+				opts.TursoURL = "libsql://h?authToken=SECRET-88"
+			} else {
+				t.Setenv("TURSO_DATABASE_URL", "libsql://h?authToken=SECRET-88")
+			}
+			plan, out, err := runWizard(t, "", opts, nil)
+			if err != nil {
+				t.Fatal("wizard failed")
+			}
+			if plan.ProvisionTurso || plan.Config.State.URL != "libsql://h" || plan.Config.State.AuthToken != "SECRET-88" {
+				t.Error("URL with embedded token was not treated as a complete pair")
+			}
+			if strings.Contains(out, "SECRET-88") {
+				t.Error("preview contains the embedded token")
+			}
+		})
+	}
+}
+
+func TestWizard_URLToken_PromptDefault(t *testing.T) {
+	pinHome(t)
+	t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+	t.Setenv("TURSO_DATABASE_URL", "")
+	var out bytes.Buffer
+	cfg := config.Defaults()
+	provision, _, token, err := chapterState(bufio.NewReader(strings.NewReader("libsql://h?token=SECRET-88\n\n")), &out, Options{State: "turso"}, cfg, false)
+	if err != nil || provision || token != "SECRET-88" || cfg.State.URL != "libsql://h" {
+		t.Error("prompt did not default to the embedded token and clean the URL")
+	}
+	if strings.Contains(out.String(), "SECRET-88") {
+		t.Error("prompt output contains the embedded token")
+	}
+}
+
+func TestWizard_URLToken_Malformed(t *testing.T) {
+	for _, source := range []string{"flag", "environment", "prompt", "retained"} {
+		for _, mode := range []string{"print", "write"} {
+			t.Run(source+"/"+mode, func(t *testing.T) {
+				pinHome(t)
+				t.Setenv("TURSO_DATABASE_URL", "")
+				t.Setenv("TURSO_AUTH_TOKEN", "fallback")
+				cfgPath := filepath.Join(t.TempDir(), "config.toml")
+				opts := Options{ConfigPath: cfgPath, State: "turso", Yes: true, Print: mode == "print"}
+				bad := "libsql://h/%zz?authToken=SECRET-88"
+				input := ""
+				var existing *config.Config
+				switch source {
+				case "flag":
+					opts.TursoURL = bad
+				case "environment":
+					t.Setenv("TURSO_DATABASE_URL", bad)
+					opts.Yes = false
+					input = "\n\n\ny\n\n\n"
+				case "prompt":
+					opts.Yes = false
+					input = "\n\n\n" + bad + "\n\n\n\n"
+				case "retained":
+					existing = config.Defaults()
+					existing.State.URL = bad
+				}
+				var out bytes.Buffer
+				opts.In, opts.Out = strings.NewReader(input), &out
+				_, err := Run(opts, existing)
+				if err == nil || err.Error() != "invalid Turso URL" {
+					t.Error("malformed URL did not produce the fixed safe error")
+				}
+				if strings.Contains(out.String(), "SECRET-88") {
+					t.Error("malformed URL token appeared in output or a prompt")
+				}
+				if strings.Contains(out.String(), "Use TURSO_DATABASE_URL/AUTH_TOKEN") || strings.Contains(out.String(), "Turso auth token:") {
+					t.Error("malformed URL reached a confirmation or token prompt")
+				}
+				if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
+					t.Error("malformed URL wrote config.toml")
+				}
+			})
+		}
+	}
+}
+
+func TestWizard_URLToken_Retained(t *testing.T) {
+	for _, source := range []string{"edit", "https-overlay", "local-libsql", "flag-precedence"} {
+		for _, mode := range []string{"print", "write"} {
+			if source == "local-libsql" && mode == "print" {
+				continue
+			}
+			t.Run(source+"/"+mode, func(t *testing.T) {
+				pinHome(t)
+				t.Setenv("TURSO_DATABASE_URL", "")
+				t.Setenv("TURSO_AUTH_TOKEN", "")
+				cfgPath := filepath.Join(t.TempDir(), "config.toml")
+				existing := config.Defaults()
+				existing.State.URL = "libsql://h?authToken=SECRET-88"
+				opts := Options{ConfigPath: cfgPath, Yes: true, State: "turso", Print: mode == "print"}
+				wantToken := "SECRET-88"
+				switch source {
+				case "https-overlay":
+					if err := config.Save(cfgPath, config.Defaults()); err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv("TURSO_DATABASE_URL", "https://h?authToken=SECRET-88")
+					var err error
+					existing, err = config.Load(cfgPath)
+					if err != nil {
+						t.Fatal("load failed")
+					}
+					opts.State = "local"
+				case "local-libsql":
+					opts.State = "local"
+				case "flag-precedence":
+					opts.TursoAuthToken, wantToken = "FLAG", "FLAG"
+				}
+				var out bytes.Buffer
+				opts.In, opts.Out = strings.NewReader(""), &out
+				plan, err := Run(opts, existing)
+				if err != nil {
+					t.Fatal("wizard failed")
+				}
+				if strings.Contains(out.String(), "SECRET-88") || strings.Contains(plan.Config.State.URL, "SECRET-88") {
+					t.Error("retained URL token appeared in output or the resulting URL")
+				}
+				if mode == "write" {
+					raw, err := os.ReadFile(cfgPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if bytes.Contains(raw, []byte("SECRET-88")) || bytes.Contains(raw, []byte("auth_token")) {
+						t.Error("retained URL credential appeared in config.toml")
+					}
+					env, err := os.ReadFile(envFilePath(t))
+					if err != nil {
+						t.Fatal("retained URL credential did not reach the env file")
+					}
+					if !strings.Contains(string(env), "TURSO_AUTH_TOKEN="+wantToken+"\n") {
+						t.Error("env file did not receive the expected token")
+					}
+				}
+			})
+		}
+	}
+}
 
 // helper: run the wizard with the given stdin string + options and
 // return the plan, captured stdout, and any error. HOME and both XDG

@@ -422,6 +422,8 @@ Flags:
 - `--turso` — provision a Turso libSQL remote DB.
 - `--turso-db-name <name>` — DB to create or reuse (default `dotfiles-state`).
 - `--turso-url <url>` — bake in an existing `libsql://` URL and skip provisioning.
+  An embedded `authToken`, `auth_token`, or `token` query parameter is removed from the URL and moved to the env file when writing, never to `config.toml`; `--turso-auth-token` takes precedence.
+  This also applies to retained configuration URLs and environment overrides; malformed URLs stop setup with `invalid Turso URL` before they are displayed or written.
 - `--turso-auth-token <token>` — use an existing auth token. When the config is written it goes to `$XDG_DATA_HOME/dotfiles/.env` (mode 0600), never to `config.toml`. Under `--print` nothing is written at all, and the rendered config omits the token.
 - `--ai-model <name>` / `--ai-bin <path>` — override the AI chapter.
 
