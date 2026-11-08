@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.13] - 2026-11-08
+
+### Bug Fixes
+
+- Keep auth tokens out of the init wizard's state URL (#111)
 ## [1.13.12] - 2026-11-08
 
 ### Bug Fixes
