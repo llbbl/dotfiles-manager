@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.0] - 2026-11-09
+
+### Features
+
+- Read and store the Turso auth token through lsm
 ## [1.13.13] - 2026-11-08
 
 ### Bug Fixes
