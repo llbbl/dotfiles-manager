@@ -3,6 +3,7 @@ package wizard
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -364,6 +365,7 @@ func runWizard(t *testing.T, input string, opts Options, existing *config.Config
 }
 
 func pinHome(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -685,5 +687,191 @@ func TestWizard_Print_OmitsAuthToken(t *testing.T) {
 	}
 	if strings.Contains(out, "auth_token") {
 		t.Errorf("--print rendered an auth_token key:\n%s", out)
+	}
+}
+
+func TestWizard_LSMChoice(t *testing.T) {
+	for _, choice := range []string{"default", "decline", "explicit env", "missing", "print", "edit"} {
+		t.Run(choice, func(t *testing.T) {
+			pinHome(t)
+			t.Setenv("TURSO_DATABASE_URL", "")
+			t.Setenv("TURSO_AUTH_TOKEN", "")
+			dir := t.TempDir()
+			t.Setenv("PATH", dir)
+			log := filepath.Join(dir, "args")
+			t.Setenv("STUB_ARGS", log)
+			if choice != "missing" {
+				if err := os.WriteFile(filepath.Join(dir, "lsm"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STUB_ARGS\"\n/bin/cat > /dev/null\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opts := Options{ConfigPath: filepath.Join(t.TempDir(), "config.toml"), TursoURL: "libsql://h", TursoAuthToken: "SECRET-110", LSMApp: "custom", LSMEnv: "dev"}
+			input := "\n\n\n\n\nn\n"
+			if choice == "decline" {
+				input = "\n\n\nn\n\nn\n"
+			}
+			if choice == "explicit env" || choice == "missing" {
+				input = "\n\n\n\nn\n"
+			}
+			if choice == "explicit env" {
+				opts.SecretStore = "env"
+				opts.SecretStoreExplicit = true
+			}
+			if choice == "print" {
+				opts.Print = true
+				opts.SecretStore = "lsm"
+				opts.Yes = true
+				input = ""
+			}
+			var existing *config.Config
+			if choice == "edit" {
+				existing = config.Defaults()
+				existing.State.Secret = &config.SecretRef{Provider: "lsm", App: "existing", Env: "test", Key: "CUSTOM"}
+				opts.Yes = true
+				opts.TursoURL = ""
+				opts.TursoAuthToken = ""
+				input = ""
+			}
+			var out bytes.Buffer
+			opts.In = strings.NewReader(input)
+			opts.Out = &out
+			plan, err := Run(opts, existing)
+			if err != nil {
+				t.Fatal("wizard failed")
+			}
+			prompted := strings.Contains(out.String(), "Store the auth token in lsm (app custom, env dev)? [Y/n]")
+			wantPrompt := choice == "default" || choice == "decline"
+			if prompted != wantPrompt {
+				t.Error("unexpected lsm prompt")
+			}
+			args, readErr := os.ReadFile(log)
+			if choice == "default" {
+				if readErr != nil || !strings.Contains(string(args), "custom\n--env\ndev") {
+					t.Error("interactive default did not select custom lsm reference")
+				}
+				if plan.Config.State.Secret == nil || plan.Config.State.Secret.App != "custom" {
+					t.Error("missing selected reference")
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Error("unexpected lsm call")
+			}
+			if choice == "print" && (!strings.Contains(out.String(), "[state.secret]") || plan.Config.State.Secret == nil) {
+				t.Error("preview omitted selected reference")
+			}
+			if choice == "edit" && (plan.Config.State.Secret == nil || *plan.Config.State.Secret != *existing.State.Secret) {
+				t.Error("edit lost existing reference")
+			}
+			if choice == "decline" || choice == "explicit env" || choice == "missing" {
+				data, err := os.ReadFile(config.EnvFilePath())
+				if err != nil || !strings.Contains(string(data), "TURSO_AUTH_TOKEN=SECRET-110") {
+					t.Error("env choice did not save token")
+				}
+			}
+			if strings.Contains(out.String(), "SECRET-110") {
+				t.Error("wizard output contains token")
+			}
+		})
+	}
+}
+
+func TestWizard_LSMWriteOrdering(t *testing.T) {
+	for _, mode := range []string{"config failure", "delete failure", "no plaintext"} {
+		t.Run(mode, func(t *testing.T) {
+			pinHome(t)
+			t.Setenv("TURSO_AUTH_TOKEN", "")
+			t.Setenv("TURSO_DATABASE_URL", "")
+			dir := t.TempDir()
+			t.Setenv("PATH", dir)
+			input := filepath.Join(dir, "input")
+			t.Setenv("STUB_INPUT", input)
+			if err := os.WriteFile(filepath.Join(dir, "lsm"), []byte("#!/bin/sh\n/bin/cat > \"$STUB_INPUT\"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cfgPath := filepath.Join(t.TempDir(), "config.toml")
+			envPath := config.EnvFilePath()
+			if err := os.MkdirAll(filepath.Dir(envPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "config failure" {
+				if err := os.Mkdir(cfgPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(envPath, []byte("TURSO_AUTH_TOKEN=old\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "delete failure" {
+				if err := os.Mkdir(envPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out bytes.Buffer
+			_, err := Run(Options{ConfigPath: cfgPath, Force: true, Yes: true, TursoURL: "libsql://h", TursoAuthToken: "SECRET-110", SecretStore: "lsm", Out: &out}, nil)
+			if (err != nil) != (mode != "no plaintext") {
+				t.Fatal("unexpected persistence result")
+			}
+			stdin, readErr := os.ReadFile(input)
+			if readErr != nil || string(stdin) != "SECRET-110" {
+				t.Error("lsm was not saved before persistence")
+			}
+			if mode == "config failure" {
+				data, readErr := os.ReadFile(envPath)
+				if readErr != nil || string(data) != "TURSO_AUTH_TOKEN=old\n" {
+					t.Error("failed config save deleted plaintext")
+				}
+			}
+			if mode == "delete failure" {
+				cfg, loadErr := config.Load(cfgPath)
+				if loadErr != nil || cfg.State.Secret == nil {
+					t.Error("delete failure lost persisted reference")
+				}
+			}
+			if mode == "no plaintext" {
+				if _, statErr := os.Stat(envPath); !os.IsNotExist(statErr) {
+					t.Error("lsm setup created env file")
+				}
+			}
+			if strings.Contains(out.String(), "removed plaintext token") {
+				t.Error("removal notice printed without deleting a token")
+			}
+		})
+	}
+}
+
+func TestWizard_LSMEOF(t *testing.T) {
+	for _, input := range []string{"", "\n\n\n\t "} {
+		t.Run(fmt.Sprintf("bytes_%d", len(input)), func(t *testing.T) {
+			pinHome(t)
+			t.Setenv("TURSO_DATABASE_URL", "")
+			t.Setenv("TURSO_AUTH_TOKEN", "")
+			dir := t.TempDir()
+			t.Setenv("PATH", dir)
+			log := filepath.Join(dir, "called")
+			t.Setenv("STUB_ARGS", log)
+			if err := os.WriteFile(filepath.Join(dir, "lsm"), []byte("#!/bin/sh\nprintf called > \"$STUB_ARGS\"\n/bin/cat >/dev/null\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			envPath := config.EnvFilePath()
+			if err := os.MkdirAll(filepath.Dir(envPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(envPath, []byte("OTHER=keep\nTURSO_AUTH_TOKEN=old\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := Run(Options{ConfigPath: filepath.Join(t.TempDir(), "config.toml"), TursoURL: "libsql://h", TursoAuthToken: "SECRET-110", In: strings.NewReader(input)}, nil)
+			if err != nil {
+				t.Fatal("EOF setup failed")
+			}
+			if _, err := os.Stat(log); !os.IsNotExist(err) {
+				t.Error("EOF selected lsm without opt-in")
+			}
+			if plan.Config.State.Secret != nil {
+				t.Error("EOF created an lsm reference")
+			}
+			data, err := os.ReadFile(envPath)
+			if err != nil || string(data) != "OTHER=keep\nTURSO_AUTH_TOKEN=SECRET-110\n" {
+				t.Error("EOF did not preserve the default env destination")
+			}
+		})
 	}
 }

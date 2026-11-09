@@ -101,8 +101,16 @@ var knownLogBackends = map[string]bool{
 // may be a file:// path or a libsql:// / https:// remote URL; AuthToken
 // is required only for remote URLs.
 type StateConfig struct {
-	URL       string `toml:"url"`
-	AuthToken string `toml:"auth_token,omitempty"`
+	URL       string     `toml:"url"`
+	AuthToken string     `toml:"auth_token,omitempty"`
+	Secret    *SecretRef `toml:"secret,omitempty"`
+}
+
+type SecretRef struct {
+	Provider string `toml:"provider"`
+	App      string `toml:"app"`
+	Env      string `toml:"env"`
+	Key      string `toml:"key,omitempty"`
 }
 
 var knownProviders = map[string]bool{
@@ -332,6 +340,18 @@ func SaveKeepingFileToken(path string, cfg *Config) (migrated bool, envPath stri
 // Validate reports an error if cfg.AI.Provider or cfg.Log.Backend is
 // not one of the known values.
 func (c *Config) Validate() error {
+	if ref := c.State.Secret; ref != nil {
+		if ref.Provider != "lsm" {
+			return errors.New("state.secret.provider must be lsm")
+		}
+		if strings.TrimSpace(ref.App) == "" || strings.TrimSpace(ref.Env) == "" {
+			return errors.New("state.secret.app and state.secret.env are required")
+		}
+		if ref.Key == "" {
+			ref.Key = "TURSO_AUTH_TOKEN"
+		}
+	}
+
 	if !knownProviders[c.AI.Provider] {
 		return fmt.Errorf("unknown ai.provider %q", c.AI.Provider)
 	}

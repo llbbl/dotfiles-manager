@@ -56,9 +56,37 @@ func SetKey(path, key, value string) error {
 // matchesKey reports whether a line assigns key, tolerating leading
 // whitespace and the optional "export " prefix that Parse also strips.
 func matchesKey(line, key string) bool {
-	t := strings.TrimSpace(line)
+	t := strings.TrimLeft(line, " \t")
 	if strings.HasPrefix(t, "export ") || strings.HasPrefix(t, "export\t") {
 		t = strings.TrimLeft(t[len("export"):], " \t")
 	}
-	return strings.HasPrefix(t, key+"=")
+	assignment, _, ok := strings.Cut(t, "=")
+	return ok && strings.TrimRight(assignment, " \t") == key
+}
+
+// DeleteKey removes all assignments of key, preserving other lines exactly.
+func DeleteKey(path, key string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	var kept strings.Builder
+	removed := false
+	for _, line := range strings.SplitAfter(string(data), "\n") {
+		if matchesKey(strings.TrimSuffix(line, "\n"), key) {
+			removed = true
+			continue
+		}
+		kept.WriteString(line)
+	}
+	if !removed {
+		return false, nil
+	}
+	if err := fsx.AtomicWrite(path, []byte(kept.String()), 0o600); err != nil {
+		return false, err
+	}
+	return true, nil
 }

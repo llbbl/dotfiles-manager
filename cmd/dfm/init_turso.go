@@ -15,6 +15,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/envfile"
 	"github.com/llbbl/dotfiles-manager/internal/store"
+	"github.com/llbbl/dotfiles-manager/internal/wizard"
 )
 
 // runTurso shells out to the `turso` CLI with a scrubbed env. The env
@@ -82,7 +83,7 @@ func extractTursoToken(stdout string) string {
 // TODO(future): support --auto-install to run the upstream installer
 // (brew or `curl ... | bash`) on the user's behalf. For now, we print
 // the command and exit so the user can run it themselves.
-func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName string) (retErr error) {
+func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName string, ref *config.SecretRef) (retErr error) {
 	// 1. Detect turso CLI.
 	if _, err := exec.LookPath("turso"); err != nil {
 		if runtime.GOOS == "darwin" {
@@ -140,27 +141,13 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
 		return fmt.Errorf("empty token from turso db tokens create")
 	}
 
-	// 7. Write URL to config. The shared guard keeps state.auth_token
-	// out of the file entirely, moving one the file already owned into
-	// the env file rather than dropping it.
 	cfg.State.URL = dbURL
-	migrated, envPath, err := config.SaveKeepingFileToken(cfgPath, cfg)
-	if err != nil {
+	if err := wizard.SaveStateToken(ctx, cfgPath, cfg, token, ref, os.Stdout); err != nil {
 		return err
 	}
-	if migrated {
-		fmt.Print(config.TokenMigrationNotice(envPath))
-	}
+	envPath := config.EnvFilePath()
 
-	// 8. Write the freshly-minted token to ~/.local/share/dotfiles/.env.
-	if err := writeTursoEnvFile(envPath, token); err != nil {
-		return err
-	}
-
-	// 9. Run migrations against the newly-configured remote. We construct
-	// a fresh config struct with the URL+token in memory rather than
-	// mutating the caller's cfg — the token isn't saved to config.toml,
-	// it lives only in the .env file.
+	// Migrations use the minted token in memory, regardless of its storage provider.
 	migrateCfg := config.Config{}
 	migrateCfg.State.URL = dbURL
 	migrateCfg.State.AuthToken = token
@@ -178,17 +165,12 @@ func runTursoInit(ctx context.Context, cfg *config.Config, cfgPath, dbName strin
 	}
 	defer func() { retErr = errors.Join(retErr, s.Close()) }()
 
-	// 10. Success block.
-	fmt.Printf(`
-✓ Turso remote configured.
-  DB:         %s
-  URL:        libsql://....  (written to %s)
-  Token:      %s (0600)
-  Migrations: applied
-
-Next step: ensure your shell loads %s, or export TURSO_AUTH_TOKEN
-in your environment. dfm reads $TURSO_AUTH_TOKEN at runtime.
-`, dbName, cfgPath, envPath, envPath)
+	fmt.Printf("\n✓ Turso remote configured.\n  DB: %s\n  Config: %s\n  Migrations: applied\n", dbName, cfgPath)
+	if ref != nil {
+		fmt.Printf("  Token: lsm (app %s, env %s, key %s)\n", ref.App, ref.Env, ref.Key)
+	} else {
+		fmt.Printf("  Token: %s (0600)\n\nNext step: ensure your shell loads %s, or export TURSO_AUTH_TOKEN in your environment.\n", envPath, envPath)
+	}
 
 	// 11. Audit event — host only, never the full URL or token.
 	audit.Log(ctx, "init.turso", map[string]any{

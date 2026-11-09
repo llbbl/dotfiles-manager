@@ -21,6 +21,7 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
+	"github.com/llbbl/dotfiles-manager/internal/lsmsecret"
 	turso "turso.tech/database/tursogo"
 )
 
@@ -128,8 +129,15 @@ func open(ctx context.Context, cfg *config.Config) (*Store, string, error) {
 
 	if isRemote(raw) {
 		token := cfg.State.AuthToken
+		if token == "" && cfg.State.Secret != nil {
+			var err error
+			token, err = lsmsecret.Get(ctx, *cfg.State.Secret)
+			if err != nil {
+				return nil, "", err
+			}
+		}
 		if token == "" {
-			return nil, "", errors.New("remote Turso URL requires an auth token; set TURSO_AUTH_TOKEN")
+			return nil, "", errors.New("remote Turso URL requires an auth token; set TURSO_AUTH_TOKEN or configure [state.secret]")
 		}
 		cachePath, err := remoteCachePath(raw)
 		if err != nil {

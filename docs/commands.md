@@ -402,9 +402,9 @@ First-run setup. Probes `[repo].remote` with `git ls-remote`:
 
 `config.toml` never holds `[state].auth_token`. Any command that rewrites it moves a token already in the file to `$XDG_DATA_HOME/dotfiles/.env` (mode 0600) and says so.
 
-A token that dfm only *reads* from `$TURSO_AUTH_TOKEN` at runtime is never written anywhere. A token you hand it outright — `--turso-auth-token`, or `$TURSO_AUTH_TOKEN` at the moment you run `dfm init --turso` — is written to that same `.env` file, because otherwise it would be discarded and the setup would not work on your next command.
+A token that dfm only *reads* from `$TURSO_AUTH_TOKEN` at runtime is never written anywhere. A token you hand it outright — `--turso-auth-token`, or `$TURSO_AUTH_TOKEN` at the moment you run `dfm init --turso` — is saved to that same `.env` file by default, or to lsm with `--secret-store lsm`.
 
-**dfm does not read that `.env` file for you.** It is written for your shell to source; `dfm` only ever reads `$TURSO_AUTH_TOKEN` from the process environment. So after a token is moved there, export it from your shell or remote state will stop authenticating. `[runtime].dotenv` searches `$XDG_CONFIG_HOME/dotfiles/.env` and `./.env`, which is a different path, and is off by default.
+**dfm does not read that `.env` file for you.** It is written for your shell to source; `dfm` reads `$TURSO_AUTH_TOKEN` from the process environment first, then resolves `[state.secret]` if configured. So after a token is moved there, export it from your shell or remote state will stop authenticating. `[runtime].dotenv` searches `$XDG_CONFIG_HOME/dotfiles/.env` and `./.env`, which is a different path, and is off by default.
 
 
 - Remote reachable and non-empty → clone it into `[repo].local`.
@@ -422,10 +422,48 @@ Flags:
 - `--turso` — provision a Turso libSQL remote DB.
 - `--turso-db-name <name>` — DB to create or reuse (default `dotfiles-state`).
 - `--turso-url <url>` — bake in an existing `libsql://` URL and skip provisioning.
-  An embedded `authToken`, `auth_token`, or `token` query parameter is removed from the URL and moved to the env file when writing, never to `config.toml`; `--turso-auth-token` takes precedence.
+  An embedded `authToken`, `auth_token`, or `token` query parameter is removed from the URL and saved to the selected secret store when writing, never to `config.toml`; `--turso-auth-token` takes precedence.
   This also applies to retained configuration URLs and environment overrides; malformed URLs stop setup with `invalid Turso URL` before they are displayed or written.
-- `--turso-auth-token <token>` — use an existing auth token. When the config is written it goes to `$XDG_DATA_HOME/dotfiles/.env` (mode 0600), never to `config.toml`. Under `--print` nothing is written at all, and the rendered config omits the token.
+- `--turso-auth-token <token>` — use an existing auth token. When the config is written it goes to the selected secret store: `$XDG_DATA_HOME/dotfiles/.env` (mode 0600) by default, or lsm; never to `config.toml`. Under `--print` nothing is written at all, and the rendered config omits the token.
+- `--secret-store <lsm|env>` — token destination (default `env` for non-interactive runs).
+- `--lsm-app <app>` / `--lsm-env <env>` — lsm reference settings (defaults `dfm` / `prod`).
 - `--ai-model <name>` / `--ai-bin <path>` — override the AI chapter.
+
+Interactive setup offers “Store the auth token in lsm (app dfm, env prod)? [Y/n]”
+when lsm is on PATH and a token is about to be saved. An explicit `--secret-store`
+choice skips that prompt. Pressing Enter accepts lsm; EOF without an answer keeps
+the env destination. The selection also applies to tokens minted by `--turso`.
+For non-interactive setup:
+
+```sh
+dfm init --turso-url libsql://your-database.turso.io \
+  --secret-store lsm --lsm-app dfm --lsm-env prod --yes
+```
+
+Supply `TURSO_AUTH_TOKEN` in the environment, or use `--turso-auth-token`.
+The token goes to `lsm set` on stdin without a newline. Only this reference is saved:
+
+```toml
+[state.secret]
+provider = "lsm"
+app = "dfm"
+env = "prod"
+key = "TURSO_AUTH_TOKEN" # optional; this is the default
+```
+
+After lsm succeeds and the config is saved, setup removes any `TURSO_AUTH_TOKEN`
+assignments from the data env file and reports the removal. A failed lsm write
+stops setup without saving a new reference or changing that env file; it never
+falls back to plaintext. A failed env-file removal is reported as an error after
+the token and reference have been saved. Existing references survive edit mode.
+`--print` previews the reference, omits the token, and never calls lsm or writes files.
+Legacy tokens already in `config.toml` still migrate through the env file when it
+is rewritten; there is no automatic migration of an existing env-file token into lsm.
+
+At runtime, only commands opening remote state call `lsm get`, with a 10-second
+timeout. An environment token (including one loaded through dotenv) overrides the
+reference. Missing lsm, failed lookups, empty output, and timeouts are errors;
+subprocess output and token values are never included in those errors.
 
 ### `dfm sync`
 

@@ -41,6 +41,9 @@ func newInitCmd() *cobra.Command {
 		tursoDBName    string
 		tursoURL       string
 		tursoAuthToken string
+		secretStore    string
+		lsmApp         string
+		lsmEnv         string
 		stateFlag      string
 		aiBin          string
 		aiModel        string
@@ -71,21 +74,26 @@ func newInitCmd() *cobra.Command {
 			}
 
 			plan, err := wizard.Run(wizard.Options{
-				ConfigPath:     cfgPath,
-				Yes:            yes,
-				Force:          force,
-				Print:          printOnly,
-				State:          stateFlag,
-				RemoteURL:      remoteFlag,
-				CreateRemote:   createRemote,
-				Turso:          tursoFlag,
-				TursoDBName:    tursoDBName,
-				TursoURL:       tursoURL,
-				TursoAuthToken: tursoAuthToken,
-				AIBin:          aiBin,
-				AIModel:        aiModel,
-				In:             os.Stdin,
-				Out:            c.OutOrStdout(),
+				Context:             ctx,
+				SecretStore:         secretStore,
+				SecretStoreExplicit: c.Flags().Changed("secret-store"),
+				LSMApp:              lsmApp,
+				LSMEnv:              lsmEnv,
+				ConfigPath:          cfgPath,
+				Yes:                 yes,
+				Force:               force,
+				Print:               printOnly,
+				State:               stateFlag,
+				RemoteURL:           remoteFlag,
+				CreateRemote:        createRemote,
+				Turso:               tursoFlag,
+				TursoDBName:         tursoDBName,
+				TursoURL:            tursoURL,
+				TursoAuthToken:      tursoAuthToken,
+				AIBin:               aiBin,
+				AIModel:             aiModel,
+				In:                  os.Stdin,
+				Out:                 c.OutOrStdout(),
 			}, existing)
 			if err != nil {
 				return err
@@ -105,7 +113,7 @@ func newInitCmd() *cobra.Command {
 			}
 
 			if plan.ProvisionTurso {
-				if err := runTursoInit(ctx, cfg, plan.ConfigPath, plan.TursoDBName); err != nil {
+				if err := runTursoInit(ctx, cfg, plan.ConfigPath, plan.TursoDBName, plan.SecretRef); err != nil {
 					return err
 				}
 				// runTursoInit re-saves config.toml with the URL; reload.
@@ -151,7 +159,10 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&tursoFlag, "turso", false, "set up a Turso libSQL remote DB (state-store chapter)")
 	cmd.Flags().StringVar(&tursoDBName, "turso-db-name", "dotfiles-state", "Turso DB name to create or reuse")
 	cmd.Flags().StringVar(&tursoURL, "turso-url", "", "libsql:// URL to bake into the config (skips provisioning)")
-	cmd.Flags().StringVar(&tursoAuthToken, "turso-auth-token", "", "Turso auth token to bake into the config")
+	cmd.Flags().StringVar(&tursoAuthToken, "turso-auth-token", "", "Turso auth token to save in the selected secret store")
+	cmd.Flags().StringVar(&secretStore, "secret-store", "env", "auth token storage: lsm|env")
+	cmd.Flags().StringVar(&lsmApp, "lsm-app", "dfm", "lsm application for the state token")
+	cmd.Flags().StringVar(&lsmEnv, "lsm-env", "prod", "lsm environment for the state token")
 	cmd.Flags().StringVar(&stateFlag, "state", "", "state store: local|turso (selects the state chapter branch)")
 	cmd.Flags().StringVar(&aiBin, "ai-bin", "", "path to the Claude Code binary (overrides the AI chapter)")
 	cmd.Flags().StringVar(&aiModel, "ai-model", "", "AI model name (overrides the AI chapter)")
