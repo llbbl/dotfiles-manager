@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.2] - 2026-11-15
+
+### Bug Fixes
+
+- deps: Bump Go to 1.27.4 for GO-2026-6859 (#115)
 ## [1.14.1] - 2026-11-15
 
 ### Bug Fixes
