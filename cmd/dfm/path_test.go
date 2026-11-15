@@ -291,10 +291,6 @@ func TestFindPathManagedEntries_EmptyInput(t *testing.T) {
 	}
 }
 
-// Stubs were retired in dfm-mxf / dfm-2bl / dfm-5mq. The corresponding
-// behavior is now covered by path_add_fish_test.go, path_remove_test.go,
-// and path_list_test.go.
-
 // equalStrings is a tiny helper to compare two string slices by value.
 // Avoids pulling in a dep for one line.
 func equalStrings(a, b []string) bool {
