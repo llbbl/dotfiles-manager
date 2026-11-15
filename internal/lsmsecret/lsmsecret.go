@@ -56,6 +56,21 @@ func run(ctx context.Context, ref config.SecretRef, op, token string, out io.Wri
 		if errors.Is(err, exec.ErrNotFound) {
 			return errors.New("lsm not found on PATH ([state.secret] needs it)")
 		}
+		// lsm v0.12.0 documents these exit codes for get only; older lsm exits 1 and
+		// falls through to the generic message.
+		var exitErr *exec.ExitError
+		if op == "get" && errors.As(err, &exitErr) {
+			switch exitErr.ExitCode() {
+			case 2:
+				return fmt.Errorf("lsm has no %s for app %s, env %s; set it with 'lsm set --app %s --env %s %s'", key(ref), ref.App, ref.Env, ref.App, ref.Env, key(ref))
+			case 3:
+				return fmt.Errorf("lsm has no store for app %s, env %s; set the key with 'lsm set --app %s --env %s %s'", ref.App, ref.Env, ref.App, ref.Env, key(ref))
+			case 4:
+				return errors.New("lsm is not initialised; run 'lsm init'")
+			case 5:
+				return fmt.Errorf("lsm could not resolve app %s, env %s", ref.App, ref.Env)
+			}
+		}
 		return fmt.Errorf("lsm lookup for %s (app %s, env %s) failed; run 'lsm get --app … --env … %s' to see why", key(ref), ref.App, ref.Env, key(ref))
 	}
 	return nil
