@@ -6,82 +6,9 @@ import (
 	"os"
 	"strings"
 	"testing"
-)
 
-func TestBuildAliasLine_TableDriven(t *testing.T) {
-	cases := []struct {
-		name    string
-		family  string
-		alias   string
-		command string
-		want    string
-	}{
-		{
-			name:    "posix simple",
-			family:  "posix",
-			alias:   "ll",
-			command: "ls -la",
-			want:    "alias ll='ls -la'\n",
-		},
-		{
-			// POSIX shells can't escape ' inside '...'; the idiom is to
-			// close the quote, emit \', and reopen: '\''.
-			name:    "posix single quote",
-			family:  "posix",
-			alias:   "g",
-			command: "echo 'hi'",
-			want:    `alias g='echo '\''hi'\'''` + "\n",
-		},
-		{
-			// Inside single quotes $ has no special meaning, so no escaping.
-			name:    "posix dollar literal",
-			family:  "posix",
-			alias:   "p",
-			command: "echo $PATH",
-			want:    "alias p='echo $PATH'\n",
-		},
-		{
-			// Inside POSIX single quotes a backslash is literal too.
-			name:    "posix backslash",
-			family:  "posix",
-			alias:   "b",
-			command: `echo a\b`,
-			want:    "alias b='echo a\\b'\n",
-		},
-		{
-			name:    "fish simple",
-			family:  "fish",
-			alias:   "ll",
-			command: "ls -la",
-			want:    "alias ll 'ls -la'\n",
-		},
-		{
-			// Fish single-quote strings: only \' and \\ are special.
-			name:    "fish single quote",
-			family:  "fish",
-			alias:   "g",
-			command: "echo 'hi'",
-			want:    `alias g 'echo \'hi\''` + "\n",
-		},
-		{
-			// Backslash gets doubled in fish so the runtime sees one \.
-			name:    "fish backslash",
-			family:  "fish",
-			alias:   "b",
-			command: `echo a\b`,
-			want:    `alias b 'echo a\\b'` + "\n",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := buildAliasLine(tc.family, tc.alias, tc.command)
-			if got != tc.want {
-				t.Errorf("buildAliasLine(%q,%q,%q)\n got: %q\nwant: %q",
-					tc.family, tc.alias, tc.command, got, tc.want)
-			}
-		})
-	}
-}
+	"github.com/llbbl/dotfiles-manager/internal/alias"
+)
 
 func TestAliasAdd_AppendsAndAudits(t *testing.T) {
 	ctx, _, logPath := setupEditCmdEnv(t)
@@ -447,7 +374,7 @@ func TestAliasRemove_RemovesAllMatches(t *testing.T) {
 }
 
 func TestAliasRemove_NotFound(t *testing.T) {
-	re := aliasMatchRe("posix", "missing")
+	re := alias.MatchRe("posix", "missing")
 	if re.MatchString("alias foo='x'") {
 		t.Fatalf("regex matched wrong alias")
 	}

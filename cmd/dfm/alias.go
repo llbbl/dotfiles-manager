@@ -4,29 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 	"text/tabwriter"
 
+	"github.com/llbbl/dotfiles-manager/internal/alias"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/spf13/cobra"
 )
-
-// aliasNameRe enforces the strict, portable subset of alias names that
-// work across bash, zsh, fish, and POSIX sh: a leading letter or
-// underscore followed by letters, digits, or underscores. We deliberately
-// reject hyphens — they're legal in some shells but not portable.
-var aliasNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// aliasGroupNameRe is what we accept for `--group <name>`. We're stricter
-// than alias names: must start with a letter (so the fence comment never
-// gets confused for a directive), allow hyphens (group names are display
-// labels, not shell identifiers), keep regex-special chars out. This lets
-// us interpolate the value directly into a fence regex without
-// QuoteMeta gymnastics.
-var aliasGroupNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 // newAliasCmd builds the parent `dfm alias` command and registers
 // its add/remove/list subcommands. The helper is a shell-aware thin
@@ -50,307 +35,6 @@ func resolveAliasTarget(shellFlag, fileFlag string) (string, string, error) {
 	return target, shellrc.Family(shell), nil
 }
 
-// buildAliasLine assembles the exact text we will append for an alias
-// definition, including the trailing newline. Quoting is intentionally
-// conservative — both branches wrap the body in single quotes so the
-// shell does no expansion at runtime.
-//
-// POSIX shells (bash/zsh/sh): the only character that needs special
-// handling inside single quotes is the single quote itself, which can't
-// be escaped at all — we close the quote, emit a literal quote via
-// '\'', and reopen.
-//
-// Fish: inside single quotes only \\ and \' have meaning; everything
-// else is literal. So we escape backslash first, then single quote.
-func buildAliasLine(family, name, command string) string {
-	if family == "fish" {
-		escaped := strings.ReplaceAll(command, `\`, `\\`)
-		escaped = strings.ReplaceAll(escaped, `'`, `\'`)
-		return fmt.Sprintf("alias %s '%s'\n", name, escaped)
-	}
-	// posix: replace ' with '\''
-	escaped := strings.ReplaceAll(command, `'`, `'\''`)
-	return fmt.Sprintf("alias %s='%s'\n", name, escaped)
-}
-
-// aliasMatchRe returns a compiled regex matching any line that defines
-// the given alias name in the given shell family. Used by `remove` and
-// indirectly by `list` (which has its own capture-style regex). Retained
-// as the legacy bare-line matcher: in the shared-block era this matches
-// both body lines inside a managed block and stray bare lines outside.
-func aliasMatchRe(family, name string) *regexp.Regexp {
-	q := regexp.QuoteMeta(name)
-	if family == "fish" {
-		return regexp.MustCompile(`^\s*alias\s+` + q + `\s+`)
-	}
-	return regexp.MustCompile(`^\s*alias\s+` + q + `\s*=`)
-}
-
-// aliasLegacyBlockRe matches the per-alias fenced block that older dfm
-// versions wrote before aliases shared one block. Dup-detect, remove and
-// --replace still recognise it; new writes never produce it.
-func aliasLegacyBlockRe(name string) *regexp.Regexp {
-	q := regexp.QuoteMeta(name)
-	return regexp.MustCompile(
-		`(?m)^[ \t]*# >>> dfm:alias ` + q + ` >>>\n` +
-			`[^\n]*\n` +
-			`[ \t]*# <<< dfm:alias ` + q + ` <<<\n?`)
-}
-
-// aliasDefaultBlockRe matches the entire shared default block:
-// `# >>> dfm:aliases >>>` … `# <<< dfm:aliases <<<`. Submatch 1 is the
-// body between the fences (may be empty). Trailing newline is optional
-// so EOF-flush blocks still match.
-func aliasDefaultBlockRe() *regexp.Regexp {
-	return regexp.MustCompile(
-		`(?ms)^[ \t]*# >>> dfm:aliases >>>\n` +
-			`(.*?)` +
-			`^[ \t]*# <<< dfm:aliases <<<\n?`)
-}
-
-// aliasGroupBlockRe matches the entire shared named-group block:
-// `# >>> dfm:group <name> >>>` … `# <<< dfm:group <name> <<<`. Submatch
-// 1 is the body. The group name has already been validated against
-// aliasGroupNameRe by the caller so it's safe to interpolate as a
-// literal (no regex metacharacters survive that validator).
-func aliasGroupBlockRe(group string) *regexp.Regexp {
-	return regexp.MustCompile(
-		`(?ms)^[ \t]*# >>> dfm:group ` + group + ` >>>\n` +
-			`(.*?)` +
-			`^[ \t]*# <<< dfm:group ` + group + ` <<<\n?`)
-}
-
-// aliasAnyGroupBlockRe matches any named-group block regardless of name.
-// Used by dup-detect to scan every group block in one pass. Go's RE2
-// flavor doesn't support backreferences, so we can't pin the close-fence
-// name to the open-fence name in a single regex. We accept any close
-// fence and then verify the open/close names agree at the call site. The
-// open-fence name is captured in submatch 1, body in submatch 2, the
-// close-fence name in submatch 3.
-func aliasAnyGroupBlockRe() *regexp.Regexp {
-	return regexp.MustCompile(
-		`(?ms)^[ \t]*# >>> dfm:group ([A-Za-z][A-Za-z0-9_-]*) >>>\n` +
-			`(.*?)` +
-			`^[ \t]*# <<< dfm:group ([A-Za-z][A-Za-z0-9_-]*) <<<\n?`)
-}
-
-// renderAliasesBlock builds the full default shared block from a list
-// of pre-rendered body lines (each already terminated by \n). Returns
-// the block with a trailing newline after the close fence.
-func renderAliasesBlock(bodyLines []string) string {
-	var b strings.Builder
-	b.WriteString("# >>> dfm:aliases >>>\n")
-	for _, ln := range bodyLines {
-		b.WriteString(ln)
-	}
-	b.WriteString("# <<< dfm:aliases <<<\n")
-	return b.String()
-}
-
-// renderGroupBlock builds the full named-group shared block. The group
-// name is interpolated verbatim; callers must have validated it against
-// aliasGroupNameRe first.
-func renderGroupBlock(group string, bodyLines []string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "# >>> dfm:group %s >>>\n", group)
-	for _, ln := range bodyLines {
-		b.WriteString(ln)
-	}
-	fmt.Fprintf(&b, "# <<< dfm:group %s <<<\n", group)
-	return b.String()
-}
-
-// extractBlockBodyLines splits a captured block body (the submatch from
-// aliasDefaultBlockRe/aliasGroupBlockRe) into its constituent newline-
-// terminated lines. Empty trailing element from the final \n is dropped.
-func extractBlockBodyLines(body string) []string {
-	if body == "" {
-		return nil
-	}
-	parts := strings.SplitAfter(body, "\n")
-	// SplitAfter keeps the separator; trim a trailing empty element if
-	// body didn't end on a newline (it always should, but be defensive).
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
-	}
-	return parts
-}
-
-// countAliasDefinitions scans `content` for every place the alias `name`
-// is currently defined: inside a legacy per-alias block, inside the
-// shared default block, inside any named-group block, or as a bare line
-// not belonging to any of the above. The total is what gates the
-// duplicate-rejection check.
-func countAliasDefinitions(family, name, content string) int {
-	matchRe := aliasMatchRe(family, name)
-	legacyRe := aliasLegacyBlockRe(name)
-	defaultRe := aliasDefaultBlockRe()
-	groupRe := aliasAnyGroupBlockRe()
-
-	legacyBlocks := len(legacyRe.FindAllStringIndex(content, -1))
-
-	// Count body-line hits inside each managed block.
-	sharedHits := 0
-	if m := defaultRe.FindStringSubmatch(content); m != nil {
-		body := m[1]
-		for _, ln := range extractBlockBodyLines(body) {
-			if matchRe.MatchString(ln) {
-				sharedHits++
-			}
-		}
-	}
-	for _, sub := range groupRe.FindAllStringSubmatch(content, -1) {
-		// Skip malformed blocks where the open and close names don't
-		// agree (Go's RE2 can't pin them in the regex; we check here).
-		if sub[1] != sub[3] {
-			continue
-		}
-		body := sub[2]
-		for _, ln := range extractBlockBodyLines(body) {
-			if matchRe.MatchString(ln) {
-				sharedHits++
-			}
-		}
-	}
-
-	// Bare-line scan over the whole file. We then subtract the lines
-	// that we already counted inside legacy blocks (1 body line each)
-	// and shared blocks (sharedHits, already counted explicitly).
-	bareTotal := 0
-	for ln := range strings.SplitSeq(content, "\n") {
-		if matchRe.MatchString(ln) {
-			bareTotal++
-		}
-	}
-	bareOutside := max(bareTotal-legacyBlocks-sharedHits, 0)
-
-	return legacyBlocks + sharedHits + bareOutside
-}
-
-// removeAliasEverywhere strips every definition of `name` from `content`
-// across all storage forms: legacy per-alias blocks, body lines in the
-// shared default block, body lines in every named-group block, and any
-// remaining bare lines. Empty shared blocks are dropped entirely. The
-// counts in the returned struct feed the audit log.
-type removalCounts struct {
-	legacyBlocks   int // number of legacy per-alias blocks removed
-	sharedEvicted  int // body lines pulled out of shared blocks
-	emptiedBlocks  int // shared blocks that ended up empty and were dropped
-	bareLines      int // stray un-fenced bare lines removed
-}
-
-func removeAliasEverywhere(family, name, content string) (string, removalCounts) {
-	var rc removalCounts
-	matchRe := aliasMatchRe(family, name)
-
-	// Phase 1: drop every legacy per-alias block for this name.
-	legacyRe := aliasLegacyBlockRe(name)
-	rc.legacyBlocks = len(legacyRe.FindAllStringIndex(content, -1))
-	content = legacyRe.ReplaceAllString(content, "")
-
-	// Phase 2a: rewrite the default shared block (if present), pruning
-	// any body lines that define this alias. If the block ends up empty,
-	// remove it entirely.
-	defaultRe := aliasDefaultBlockRe()
-	content = defaultRe.ReplaceAllStringFunc(content, func(full string) string {
-		m := defaultRe.FindStringSubmatch(full)
-		body := m[1]
-		kept := make([]string, 0)
-		for _, ln := range extractBlockBodyLines(body) {
-			if matchRe.MatchString(ln) {
-				rc.sharedEvicted++
-				continue
-			}
-			kept = append(kept, ln)
-		}
-		if len(kept) == 0 {
-			rc.emptiedBlocks++
-			return ""
-		}
-		return renderAliasesBlock(kept)
-	})
-
-	// Phase 2b: same treatment for every named-group block.
-	groupRe := aliasAnyGroupBlockRe()
-	content = groupRe.ReplaceAllStringFunc(content, func(full string) string {
-		m := groupRe.FindStringSubmatch(full)
-		// Mismatched open/close fence names: leave the text alone.
-		if m[1] != m[3] {
-			return full
-		}
-		groupName := m[1]
-		body := m[2]
-		kept := make([]string, 0)
-		for _, ln := range extractBlockBodyLines(body) {
-			if matchRe.MatchString(ln) {
-				rc.sharedEvicted++
-				continue
-			}
-			kept = append(kept, ln)
-		}
-		if len(kept) == 0 {
-			rc.emptiedBlocks++
-			return ""
-		}
-		return renderGroupBlock(groupName, kept)
-	})
-
-	// Phase 3: sweep any remaining bare lines (legacy un-fenced entries
-	// from before dfm fenced anything).
-	lines := strings.Split(content, "\n")
-	kept := make([]string, 0, len(lines))
-	for _, ln := range lines {
-		if matchRe.MatchString(ln) {
-			rc.bareLines++
-			continue
-		}
-		kept = append(kept, ln)
-	}
-	content = strings.Join(kept, "\n")
-
-	return content, rc
-}
-
-// upsertAliasIntoBlock inserts `bodyLine` into the target shared block,
-// creating the block at EOF if it doesn't yet exist. `group` is "" for
-// the default block, otherwise the validated group name.
-func upsertAliasIntoBlock(content, group, bodyLine string) (string, string) {
-	var re *regexp.Regexp
-	if group == "" {
-		re = aliasDefaultBlockRe()
-	} else {
-		re = aliasGroupBlockRe(group)
-	}
-	if loc := re.FindStringSubmatchIndex(content); loc != nil {
-		// loc[2]/loc[3] is the body capture range.
-		bodyStart, bodyEnd := loc[2], loc[3]
-		body := content[bodyStart:bodyEnd]
-		lines := extractBlockBodyLines(body)
-		lines = append(lines, bodyLine)
-		var rebuilt string
-		if group == "" {
-			rebuilt = renderAliasesBlock(lines)
-		} else {
-			rebuilt = renderGroupBlock(group, lines)
-		}
-		return content[:loc[0]] + rebuilt + content[loc[1]:], "appended"
-	}
-	// No existing block: append a fresh one. Guarantee a newline
-	// separator if the file doesn't already end in \n (or is empty,
-	// in which case we want nothing before the block).
-	prefix := content
-	if prefix != "" && !strings.HasSuffix(prefix, "\n") {
-		prefix += "\n"
-	}
-	var block string
-	if group == "" {
-		block = renderAliasesBlock([]string{bodyLine})
-	} else {
-		block = renderGroupBlock(group, []string{bodyLine})
-	}
-	return prefix + block, "created"
-}
-
 func newAliasAddCmd() *cobra.Command {
 	var (
 		shellFlag string
@@ -365,7 +49,7 @@ func newAliasAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
 			name, command := args[0], args[1]
-			if !aliasNameRe.MatchString(name) {
+			if !alias.ValidName.MatchString(name) {
 				return exitf(exitResolveErr,
 					"invalid alias name %q: must match [A-Za-z_][A-Za-z0-9_]*", name)
 			}
@@ -376,7 +60,7 @@ func newAliasAddCmd() *cobra.Command {
 				return exitf(exitResolveErr,
 					"--replace and --force are mutually exclusive")
 			}
-			if groupFlag != "" && !aliasGroupNameRe.MatchString(groupFlag) {
+			if groupFlag != "" && !alias.ValidGroup.MatchString(groupFlag) {
 				return exitf(exitResolveErr,
 					"invalid --group name %q: must match [A-Za-z][A-Za-z0-9_-]*", groupFlag)
 			}
@@ -408,7 +92,7 @@ func newAliasAddCmd() *cobra.Command {
 				return fmt.Errorf("stat %s: %w", canonical, err)
 			}
 
-			existingCount := countAliasDefinitions(family, name, string(current))
+			existingCount := alias.Count(family, name, string(current))
 
 			// Default path (no --replace, no --force): refuse to add a
 			// duplicate. No snapshot, no audit, no mutation.
@@ -418,7 +102,7 @@ func newAliasAddCmd() *cobra.Command {
 					name, file.DisplayPath)
 			}
 
-			bodyLine := buildAliasLine(family, name, command)
+			bodyLine := alias.Line(family, name, command)
 
 			var (
 				newContent  string
@@ -427,14 +111,14 @@ func newAliasAddCmd() *cobra.Command {
 			)
 			switch {
 			case replace && existingCount > 0:
-				stripped, _ := removeAliasEverywhere(family, name, string(current))
-				newContent, blockAction = upsertAliasIntoBlock(stripped, groupFlag, bodyLine)
+				stripped, _ := alias.RemoveEverywhere(family, name, string(current))
+				newContent, blockAction = alias.Upsert(stripped, groupFlag, bodyLine)
 				subAction = "replace"
 			case force && existingCount > 0:
-				newContent, blockAction = upsertAliasIntoBlock(string(current), groupFlag, bodyLine)
+				newContent, blockAction = alias.Upsert(string(current), groupFlag, bodyLine)
 				subAction = "force-append"
 			default:
-				newContent, blockAction = upsertAliasIntoBlock(string(current), groupFlag, bodyLine)
+				newContent, blockAction = alias.Upsert(string(current), groupFlag, bodyLine)
 			}
 			newBytes := []byte(newContent)
 			bytesDelta := len(newBytes) - len(current)
@@ -526,7 +210,7 @@ func newAliasRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			name := args[0]
-			if !aliasNameRe.MatchString(name) {
+			if !alias.ValidName.MatchString(name) {
 				return exitf(exitResolveErr,
 					"invalid alias name %q: must match [A-Za-z_][A-Za-z0-9_]*", name)
 			}
@@ -558,8 +242,8 @@ func newAliasRemoveCmd() *cobra.Command {
 				return fmt.Errorf("stat %s: %w", canonical, err)
 			}
 
-			stripped, rc := removeAliasEverywhere(family, name, string(current))
-			removed := rc.legacyBlocks + rc.sharedEvicted + rc.bareLines
+			stripped, rc := alias.RemoveEverywhere(family, name, string(current))
+			removed := rc.LegacyBlocks + rc.SharedEvicted + rc.BareLines
 			if removed == 0 {
 				fmt.Fprintf(c.ErrOrStderr(),
 					"alias '%s' not found in %s\n", name, file.DisplayPath)
@@ -581,10 +265,10 @@ func newAliasRemoveCmd() *cobra.Command {
 				"alias_name":             name,
 				"shell":                  family,
 				"lines_removed":          removed,
-				"blocks_removed":         rc.legacyBlocks,
-				"bare_lines_removed":     rc.bareLines,
-				"shared_block_evictions": rc.sharedEvicted,
-				"empty_blocks_dropped":   rc.emptiedBlocks,
+				"blocks_removed":         rc.LegacyBlocks,
+				"bare_lines_removed":     rc.BareLines,
+				"shared_block_evictions": rc.SharedEvicted,
+				"empty_blocks_dropped":   rc.EmptiedBlocks,
 			}); err != nil {
 				return err
 			}
@@ -598,15 +282,6 @@ func newAliasRemoveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fileFlag, "file", "", "explicit rc file (overrides --shell)")
 	return cmd
 }
-
-// aliasListPosixRe and aliasListFishRe are intentionally best-effort:
-// they recognise the common single-line `alias name='body'` forms but
-// don't try to handle escaped quotes or multi-line definitions. The
-// list command swallows any line that doesn't match.
-var (
-	aliasListPosixRe = regexp.MustCompile(`^\s*alias\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(['"])(.+)(['"])\s*$`)
-	aliasListFishRe  = regexp.MustCompile(`^\s*alias\s+([A-Za-z_][A-Za-z0-9_]*)\s+(['"])(.+)(['"])\s*$`)
-)
 
 func newAliasListCmd() *cobra.Command {
 	var (
@@ -644,20 +319,10 @@ func newAliasListCmd() *cobra.Command {
 				return fmt.Errorf("read %s: %w", target, err)
 			}
 
-			re := aliasListPosixRe
-			if family == "fish" {
-				re = aliasListFishRe
-			}
-
 			tw := tabwriter.NewWriter(c.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "NAME\tCOMMAND\tFILE")
-			for ln := range strings.SplitSeq(string(data), "\n") {
-				m := re.FindStringSubmatch(ln)
-				if m == nil {
-					continue
-				}
-				// m[1]=name, m[3]=body. We deliberately don't un-escape.
-				fmt.Fprintf(tw, "%s\t%s\t%s\n", m[1], m[3], displayPath)
+			for _, e := range alias.Parse(family, string(data)) {
+				fmt.Fprintf(tw, "%s\t%s\t%s\n", e.Name, e.Command, displayPath)
 			}
 			tw.Flush()
 
