@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,9 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
-	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -875,31 +871,18 @@ func runPathImportApply(c *cobra.Command, target, family string, current []byte,
 	if mgrErr != nil {
 		return fmt.Errorf("snapshot manager: %w", mgrErr)
 	}
-	snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
-	if err != nil {
-		return err
-	}
 
-	if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
-		return fmt.Errorf("write %s: %w", canonical, err)
-	}
-
-	sum := sha256.Sum256(newContent)
-	newHash := hex.EncodeToString(sum[:])
-
-	// Audit field shape mirrors path.add: marker_id_new / marker_id_old /
-	// snapshot_id are the same triple. lines_removed counts importable
-	// entries folded into the new block. sub_action distinguishes
-	// import from add/remove.
-	if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.import", map[string]any{
+	// Audit fields mirror path.add; WriteTracked adds snapshot_id. lines_removed
+	// counts importable entries folded into the new block.
+	snap, err := snapshot.WriteTracked(c.Context(), mgr, s, canonical, file, newContent, info.Mode().Perm(), "path.import", map[string]any{
 		"marker_id_new": newID,
 		"marker_id_old": "",
-		"snapshot_id":   snap.ID,
 		"lines_removed": len(report.Importable),
 		"dirs_count":    len(dirs),
 		"direction":     pathDirectionPrepend,
 		"sub_action":    "import",
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 

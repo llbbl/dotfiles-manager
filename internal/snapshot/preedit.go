@@ -2,8 +2,13 @@ package snapshot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 
+	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
@@ -23,6 +28,24 @@ func TakePreEdit(ctx context.Context, mgr *Manager, canonical string, file track
 	snap, err := mgr.Snapshot(ctx, canonical, &f, ReasonPreEdit)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("pre-edit snapshot: %w", err)
+	}
+	return snap, nil
+}
+
+// WriteTracked takes a pre-edit snapshot of canonical, atomically writes
+// content with mode, and records the new hash and audit event for file.
+func WriteTracked(ctx context.Context, mgr *Manager, s *store.Store, canonical string, file tracker.File,
+	content []byte, mode os.FileMode, action string, meta map[string]any) (Snapshot, error) {
+	snap, err := TakePreEdit(ctx, mgr, canonical, file)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if err := fsx.AtomicWrite(canonical, content, mode); err != nil {
+		return Snapshot{}, fmt.Errorf("write %s: %w", canonical, err)
+	}
+	sum := sha256.Sum256(content)
+	if err := tracker.RecordHashChange(ctx, s, file, hex.EncodeToString(sum[:]), snap.ID, action, meta); err != nil {
+		return Snapshot{}, err
 	}
 	return snap, nil
 }
