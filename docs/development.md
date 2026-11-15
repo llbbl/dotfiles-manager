@@ -4,7 +4,7 @@
 
 Required tool versions are pinned in [`mise.toml`](../mise.toml):
 
-- Go 1.26.10
+- Go 1.26.11
 - just 1.46.0
 - golangci-lint 2.13.2
 - govulncheck 1.8.0
