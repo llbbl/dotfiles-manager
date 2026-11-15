@@ -79,7 +79,7 @@ shasum -a 256 -c checksums.txt --ignore-missing
 
 ## From source
 
-Requires Go 1.26.11 and `just` — both pinned in [`mise.toml`](../mise.toml).
+Requires Go 1.27.4 and `just` — both pinned in [`mise.toml`](../mise.toml).
 
 ```sh
 git clone https://github.com/llbbl/dotfiles-manager.git
