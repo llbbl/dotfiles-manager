@@ -190,6 +190,8 @@ dfm alias add tf 'terraform' --group terraform
 `--shell <bash|zsh|fish|profile>` or `--file <path>` picks the target rc file;
 the default follows `$SHELL`. `~/x` and `$HOME/x` are recognized as the same
 directory, so re-adding one spelling of an existing entry exits 4.
+Adding a directory that doesn't exist yet warns on stderr but still succeeds: POSIX
+shells (bash, zsh, sh) put it on PATH now, while fish skips it until it exists.
 
 Quoting is the usual trap for alias commands: single-quote anything with shell
 metacharacters so the user's shell does not expand them at invocation time.

@@ -200,6 +200,8 @@ Flags:
 
 Exit 4 if the dir is already on the managed entry in the same direction (cross-spelling equivalence: `~/x` and `$HOME/x` are the same dir). Exit 3 on secrets findings (suppressible with `--force`).
 
+A dir that doesn't exist yet is still added, with a warning on stderr, because shells treat it differently: POSIX shells (bash, zsh, sh) put it on PATH straight away, while fish's `fish_add_path` skips it until the directory exists. The add still exits 0. dfm can't check a dir that still holds an unexpanded variable, such as `$GOPATH/bin` or `/opt/$TOOLCHAIN/bin`, so it doesn't warn about one.
+
 ### `dfm path remove <dir>`
 
 Remove `<dir>` from the dfm-managed PATH entry. If the entry has multiple dirs the block shrinks; if `<dir>` was the only dir the entire block is dropped (no empty stub left behind).

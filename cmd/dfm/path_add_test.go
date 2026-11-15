@@ -362,6 +362,9 @@ func TestPathAdd_ForceBypassesSecretScan(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Errorf("file mutated on secrets refusal:\nbefore: %s\nafter:  %s", before, after)
 	}
+	if strings.Contains(stderr1.String(), "does not exist yet") {
+		t.Errorf("refused add warned about a missing dir:\n%s", stderr1.String())
+	}
 
 	// With --force: succeeds. Managed block is written, dir token
 	// round-trips into the marker `dirs=` field.
@@ -589,3 +592,134 @@ func TestPathAdd_CorruptionGuardMultipleSameDirection(t *testing.T) {
 // Fish targets are first-class as of dfm-mxf. Positive fish-flow
 // coverage now lives in path_add_fish_test.go; this stub is left as a
 // breadcrumb so future grep'rs find their way.
+
+const missingDirWarnTail = " does not exist yet; POSIX shells add it now, fish skips it until it exists"
+
+// isolatePathHome points HOME and XDG at a temp dir so "~/" tokens and
+// any config lookup stay inside the test.
+func isolatePathHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+}
+
+func TestPathAdd_MissingDirWarning(t *testing.T) {
+	existing := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "not-created")
+	// A parent with no permissions makes stat fail with EACCES, not ENOENT.
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	cases := []struct {
+		name    string
+		dir     string
+		warn    bool
+		nonRoot bool
+	}{
+		{"missing dir warns", missing, true, false},
+		{"tilde keeps literal token", "~/not-created", true, false},
+		{"existing dir is silent", existing, false, false},
+		{"unexpanded variable is silent", "$UNSET_VAR/bin", false, false},
+		{"embedded variable is silent", "/opt/$UNSET_VAR/bin", false, false},
+		{"relative token is silent", "relative/bin", false, false},
+		{"stat error other than not-exist is silent", filepath.Join(locked, "bin"), false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.nonRoot && os.Geteuid() == 0 {
+				t.Skip("root ignores directory permissions")
+			}
+			isolatePathHome(t)
+			ctx, _, _ := setupEditCmdEnv(t)
+			canonical, _ := writeTracked(t, ctx, "# bashrc\n")
+
+			cmd := newPathCmd()
+			cmd.SetContext(ctx)
+			var stdout, stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs([]string{"add", "--file", canonical, tc.dir})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("execute: %v\nstderr: %s", err, stderr.String())
+			}
+
+			if tc.warn {
+				if want := "warning: " + tc.dir + missingDirWarnTail; !strings.Contains(stderr.String(), want) {
+					t.Errorf("stderr missing %q:\n%s", want, stderr.String())
+				}
+			} else if strings.Contains(stderr.String(), "does not exist yet") {
+				t.Errorf("unexpected warning:\n%s", stderr.String())
+			}
+			got, err := os.ReadFile(canonical)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if !bytes.Contains(got, []byte("for __dfm_d in "+tc.dir+"; do")) {
+				t.Errorf("block for %s not written:\n%s", tc.dir, got)
+			}
+		})
+	}
+}
+
+func TestPathAdd_FailedWriteDoesNotWarn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	isolatePathHome(t)
+	ctx, _, _ := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "# bashrc\n")
+	// The atomic write creates its temp file next to the rc file, so a
+	// read-only parent makes it fail.
+	rcDir := filepath.Dir(canonical)
+	if err := os.Chmod(rcDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(rcDir, 0o755) })
+
+	cmd := newPathCmd()
+	cmd.SetContext(ctx)
+	var stderr bytes.Buffer
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"add", "--file", canonical, filepath.Join(t.TempDir(), "not-created")})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("add into a read-only rc dir succeeded, want a write error")
+	}
+	if strings.Contains(stderr.String(), "does not exist yet") {
+		t.Errorf("failed write still warned:\n%s", stderr.String())
+	}
+}
+
+func TestPathAdd_AlreadyPresentDoesNotWarn(t *testing.T) {
+	isolatePathHome(t)
+	ctx, _, _ := setupEditCmdEnv(t)
+	canonical, _ := writeTracked(t, ctx, "# bashrc\n")
+	missing := filepath.Join(t.TempDir(), "not-created")
+
+	first := newPathCmd()
+	first.SetContext(ctx)
+	first.SetOut(&bytes.Buffer{})
+	first.SetErr(&bytes.Buffer{})
+	first.SetArgs([]string{"add", "--file", canonical, missing})
+	if err := first.Execute(); err != nil {
+		t.Fatalf("first add: %v", err)
+	}
+
+	second := newPathCmd()
+	second.SetContext(ctx)
+	var stderr bytes.Buffer
+	second.SetOut(&bytes.Buffer{})
+	second.SetErr(&stderr)
+	second.SetArgs([]string{"add", "--file", canonical, missing})
+	if err := second.Execute(); err == nil {
+		t.Fatal("second add of the same dir succeeded, want the already-managed refusal")
+	}
+	if strings.Contains(stderr.String(), "does not exist yet") {
+		t.Errorf("no-op add warned:\n%s", stderr.String())
+	}
+}

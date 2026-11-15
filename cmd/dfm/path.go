@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -699,6 +701,16 @@ func newPathAddCmd() *cobra.Command {
 
 			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
 				return fmt.Errorf("write %s: %w", canonical, err)
+			}
+
+			// fish_add_path drops a dir that isn't on disk while the POSIX blocks
+			// add it anyway. A path still holding a variable dfm can't expand is
+			// skipped.
+			if filepath.IsAbs(needle) && !strings.Contains(needle, "$") {
+				if _, err := os.Stat(needle); errors.Is(err, fs.ErrNotExist) {
+					fmt.Fprintf(c.ErrOrStderr(),
+						"warning: %s does not exist yet; POSIX shells add it now, fish skips it until it exists\n", dir)
+				}
 			}
 
 			sum := sha256.Sum256(newContent)

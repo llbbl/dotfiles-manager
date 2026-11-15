@@ -339,3 +339,26 @@ func TestPathBlock_Fish_SkipsMissingDir(t *testing.T) {
 		t.Errorf("PATH picked up a missing dir: %v", got)
 	}
 }
+
+// The other half of the fish divergence: bash and zsh put a missing dir
+// on PATH straight away.
+func TestPathBlock_Posix_AddsMissingDir(t *testing.T) {
+	shells := []struct{ family, sh string }{{"posix", "bash"}, {"zsh", "zsh"}}
+	for _, tc := range shells {
+		t.Run(tc.sh, func(t *testing.T) {
+			p := lookInterpreter(t, tc.sh)
+			argv := []string{p}
+			if tc.sh == "zsh" {
+				argv = append(argv, "-f")
+			}
+			missing := filepath.Join(t.TempDir(), "not-created")
+			block := renderPathBlock(tc.family, pathMarkerID(pathDirectionPrepend, []string{missing}),
+				goldenTime, pathDirectionPrepend, []string{missing})
+			interp := pathInterpreter{name: tc.sh, argv: argv, echoCmd: `echo "$PATH"`, split: splitColon}
+			got := runPathBlock(t, interp, block, "/usr/bin", []string{missing}, 1)
+			if !equalStrings(got, []string{missing}) {
+				t.Errorf("PATH = %v, want %s on it", got, missing)
+			}
+		})
+	}
+}
