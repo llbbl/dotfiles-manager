@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.7] - 2026-11-15
+
+### Refactoring
+
+- Move alias block logic into internal/alias
+## [1.14.6] - 2026-11-15
+
+### Bug Fixes
+
+- Report lsm lookup failures by cause
 ## [1.14.5] - 2026-11-15
 
 ### Refactoring
