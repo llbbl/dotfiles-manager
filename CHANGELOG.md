@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.8] - 2026-11-15
+
+### Refactoring
+
+- Move PATH block primitives into internal/pathblock
 ## [1.14.7] - 2026-11-15
 
 ### Refactoring
