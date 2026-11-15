@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.1] - 2026-11-15
+
+### Bug Fixes
+
+- Warn when dfm path add gets a directory that does not exist
 ## [1.14.0] - 2026-11-09
 
 ### Features
