@@ -18,7 +18,6 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
-	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
@@ -508,25 +507,11 @@ func writeTrackedEdit(c *cobra.Command, s *store.Store, cmdName, path string, co
 	if err != nil {
 		return tracker.File{}, fmt.Errorf("snapshot manager: %w", err)
 	}
-	snap, err := snapshot.TakePreEdit(ctx, mgr, canonical, file)
-	if err != nil {
-		return tracker.File{}, err
-	}
-
 	mode := os.FileMode(0o644)
 	if info, serr := os.Stat(canonical); serr == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := fsx.AtomicWrite(canonical, content, mode); err != nil {
-		return tracker.File{}, fmt.Errorf("write %s: %w", canonical, err)
-	}
-
-	if meta == nil {
-		meta = map[string]any{}
-	}
-	meta["snapshot_id"] = snap.ID
-	sum := sha256.Sum256(content)
-	if err := tracker.RecordHashChange(ctx, s, file, hex.EncodeToString(sum[:]), snap.ID, action, meta); err != nil {
+	if _, err := snapshot.WriteTracked(ctx, mgr, s, canonical, file, content, mode, action, meta); err != nil {
 		return tracker.File{}, err
 	}
 	return file, nil
@@ -654,16 +639,10 @@ func newPathAddCmd() *cobra.Command {
 					len(res.Findings))
 			}
 
-			// Snapshot first, mirroring alias add. ReasonPreEdit comes
-			// from TakePreEdit — matches the repo convention for
-			// mutation commands.
+			// WriteTracked below takes the pre-edit snapshot before writing.
 			mgr, mgrErr := newSnapshotManager(c.Context(), s)
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
-			}
-			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
-			if err != nil {
-				return err
 			}
 
 			newID := pathMarkerID(direction, newDirs)
@@ -697,23 +676,6 @@ func newPathAddCmd() *cobra.Command {
 				newContent = append(newContent, block...)
 			}
 
-			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("write %s: %w", canonical, err)
-			}
-
-			// fish_add_path drops a dir that isn't on disk while the POSIX blocks
-			// add it anyway. A path still holding a variable dfm can't expand is
-			// skipped.
-			if filepath.IsAbs(needle) && !strings.Contains(needle, "$") {
-				if _, err := os.Stat(needle); errors.Is(err, fs.ErrNotExist) {
-					fmt.Fprintf(c.ErrOrStderr(),
-						"warning: %s does not exist yet; POSIX shells add it now, fish skips it until it exists\n", dir)
-				}
-			}
-
-			sum := sha256.Sum256(newContent)
-			newHash := hex.EncodeToString(sum[:])
-
 			subAction := "add"
 			if force && secretFlagged {
 				subAction = "force-add"
@@ -724,15 +686,24 @@ func newPathAddCmd() *cobra.Command {
 			// already public-facing (it lives in PATH at runtime), so
 			// recording it lets audit consumers reconstruct the
 			// transition without re-reading the rc file.
-			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.add", map[string]any{
+			if _, err := snapshot.WriteTracked(c.Context(), mgr, s, canonical, file, newContent, info.Mode().Perm(), "path.add", map[string]any{
 				"dir":           dir,
 				"direction":     direction,
 				"marker_id_new": newID,
 				"marker_id_old": markerIDOld,
-				"snapshot_id":   snap.ID,
 				"sub_action":    subAction,
 			}); err != nil {
 				return err
+			}
+
+			// fish_add_path drops a dir that isn't on disk while the POSIX blocks
+			// add it anyway. A path still holding a variable dfm can't expand is
+			// skipped.
+			if filepath.IsAbs(needle) && !strings.Contains(needle, "$") {
+				if _, err := os.Stat(needle); errors.Is(err, fs.ErrNotExist) {
+					fmt.Fprintf(c.ErrOrStderr(),
+						"warning: %s does not exist yet; POSIX shells add it now, fish skips it until it exists\n", dir)
+				}
 			}
 
 			fmt.Fprintf(c.OutOrStdout(),
@@ -831,10 +802,6 @@ func newPathRemoveCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
-			if err != nil {
-				return err
-			}
 
 			var (
 				newContent   []byte
@@ -867,19 +834,11 @@ func newPathRemoveCmd() *cobra.Command {
 				newContent = append(newContent, current[matchedEntry.BlockEnd:]...)
 			}
 
-			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("write %s: %w", canonical, err)
-			}
-
-			sum := sha256.Sum256(newContent)
-			newHash := hex.EncodeToString(sum[:])
-
-			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "path.remove", map[string]any{
+			if _, err := snapshot.WriteTracked(c.Context(), mgr, s, canonical, file, newContent, info.Mode().Perm(), "path.remove", map[string]any{
 				"dir":           dir,
 				"direction":     direction,
 				"marker_id_new": markerIDNew,
 				"marker_id_old": markerIDOld,
-				"snapshot_id":   snap.ID,
 				"entry_deleted": entryDeleted,
 			}); err != nil {
 				return err

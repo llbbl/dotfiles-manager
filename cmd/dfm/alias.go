@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,10 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
-	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -553,18 +549,6 @@ func newAliasAddCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
-			if err != nil {
-				return err
-			}
-
-			if err := fsx.AtomicWrite(canonical, newBytes, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("write %s: %w", canonical, err)
-			}
-
-			sum := sha256.Sum256(newBytes)
-			newHash := hex.EncodeToString(sum[:])
-
 			// `sub_action` is the user-intent path (append/replace/
 			// force-append). `block_action` is the block-level effect
 			// (created vs appended-into vs replaced). For --replace we always tag
@@ -581,7 +565,7 @@ func newAliasAddCmd() *cobra.Command {
 
 			// Privacy: NEVER include the command body. Name + shell +
 			// group + counts + hashes only.
-			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "alias.add", map[string]any{
+			if _, err := snapshot.WriteTracked(c.Context(), mgr, s, canonical, file, newBytes, info.Mode().Perm(), "alias.add", map[string]any{
 				"alias_name":   name,
 				"shell":        family,
 				"group":        groupLabel,
@@ -669,24 +653,12 @@ func newAliasRemoveCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
-			if err != nil {
-				return err
-			}
-
-			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("write %s: %w", canonical, err)
-			}
-
-			sum := sha256.Sum256(newContent)
-			newHash := hex.EncodeToString(sum[:])
-
 			// `lines_removed` is the user-visible total. The breakdown
 			// fields let audit consumers tell where the entries came
 			// from: legacy per-alias blocks, evictions from shared
 			// blocks, stray bare lines, and how many shared blocks went
 			// empty as a side-effect.
-			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "alias.remove", map[string]any{
+			if _, err := snapshot.WriteTracked(c.Context(), mgr, s, canonical, file, newContent, info.Mode().Perm(), "alias.remove", map[string]any{
 				"alias_name":             name,
 				"shell":                  family,
 				"lines_removed":          removed,

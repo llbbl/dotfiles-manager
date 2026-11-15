@@ -8,10 +8,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/llbbl/dotfiles-manager/internal/fsx"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
-	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -77,25 +75,14 @@ func newAppendCmd() *cobra.Command {
 			if mgrErr != nil {
 				return fmt.Errorf("snapshot manager: %w", mgrErr)
 			}
-			snap, err := snapshot.TakePreEdit(c.Context(), mgr, canonical, file)
-			if err != nil {
-				return err
-			}
-
-			if err := fsx.AtomicWrite(canonical, newContent, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("write %s: %w", canonical, err)
-			}
-
-			sum := sha256.Sum256(newContent)
-			newHash := hex.EncodeToString(sum[:])
-
-			if err := tracker.RecordHashChange(c.Context(), s, file, newHash, snap.ID, "append", map[string]any{
+			if _, err := snapshot.WriteTracked(c.Context(), mgr, s, canonical, file, newContent, info.Mode().Perm(), "append", map[string]any{
 				"bytes_appended": len(appendBytes),
 			}); err != nil {
 				return err
 			}
 
-			short := newHash
+			sum := sha256.Sum256(newContent)
+			short := hex.EncodeToString(sum[:])
 			if len(short) > 8 {
 				short = short[:8]
 			}
