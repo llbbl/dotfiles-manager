@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/llbbl/dotfiles-manager/internal/pathblock"
+	"github.com/llbbl/dotfiles-manager/internal/pathimport"
 )
 
 // runImport executes `dfm path import` against the given canonical path
@@ -71,7 +72,7 @@ export PATH=$HOME/extra:$PATH
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -101,7 +102,7 @@ esac
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -109,7 +110,7 @@ esac
 		t.Fatalf("got %d importable, want 1:\n%s", len(report.Importable), stdout)
 	}
 	got := report.Importable[0]
-	if got.Shape != pathImportShapeGuarded {
+	if got.Shape != pathimport.ShapeGuarded {
 		t.Errorf("shape = %q, want guarded", got.Shape)
 	}
 	if got.Dir != "$HOME/.cargo/bin" {
@@ -137,7 +138,7 @@ esac
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -166,7 +167,7 @@ source ~/.oh-my-zsh.sh
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -197,7 +198,7 @@ func TestPathImport_ManagedBlockSkippedAsOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -234,7 +235,7 @@ export PATH="${FOO_DIR}:$PATH"
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -264,7 +265,7 @@ export PATH="~/x:$PATH"
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -319,7 +320,7 @@ PATH=$(some-script):$PATH
 	if err != nil {
 		t.Fatalf("execute json: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
@@ -422,7 +423,7 @@ func TestPathImport_OnlyManagedNoProposal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute json: %v", err)
 	}
-	var report pathImportReport
+	var report pathimport.Report
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json: %v\n%s", err, stdout)
 	}
