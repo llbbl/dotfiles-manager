@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.3] - 2026-11-15
+
+### Miscellaneous
+
+- Drop legacy tracker IDs from code comments
 ## [1.14.2] - 2026-11-15
 
 ### Bug Fixes
