@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
+	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/spf13/cobra"
 )
@@ -40,95 +40,14 @@ func newAliasCmd() *cobra.Command {
 	return cmd
 }
 
-// detectShell returns the basename of $SHELL, lowercased. Empty if unset.
-func detectShell() string {
-	sh := os.Getenv("SHELL")
-	if sh == "" {
-		return ""
-	}
-	return strings.ToLower(filepath.Base(sh))
-}
-
-// rcFileForShell maps a shell name to its conventional rc file. Anything
-// unrecognised falls back to ~/.profile (POSIX-compatible).
-func rcFileForShell(shell string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
-	}
-	switch shell {
-	case "bash":
-		return filepath.Join(home, ".bashrc"), nil
-	case "zsh":
-		return filepath.Join(home, ".zshrc"), nil
-	case "fish":
-		return filepath.Join(home, ".config", "fish", "config.fish"), nil
-	default:
-		return filepath.Join(home, ".profile"), nil
-	}
-}
-
-// shellFamily collapses a raw shell name to one of "fish" or "posix"
-// (bash, zsh, sh, profile). Used for picking quoting + regex syntax.
-// Alias syntax is identical in bash and zsh, so zsh collapses here; PATH
-// rendering needs a finer split and uses pathShellFamily instead.
-func shellFamily(shell string) string {
-	if shell == "fish" {
-		return "fish"
-	}
-	return "posix"
-}
-
-// shellFromFilename guesses the shell behind an rc file, for --file
-// given without --shell. Zsh owns the ".z*" family plus anything
-// spelling out "zsh"; everything unrecognised is plain sh.
-func shellFromFilename(path string) string {
-	base := strings.ToLower(filepath.Base(path))
-	switch {
-	case strings.HasSuffix(base, ".fish"):
-		return "fish"
-	case strings.Contains(base, "zsh"), strings.HasPrefix(base, ".z"):
-		return "zsh"
-	default:
-		return "sh"
-	}
-}
-
-// resolveShellTarget figures out which file we should be mutating given
-// the user's optional --shell / --file overrides plus $SHELL. It returns
-// the absolute file path and the raw shell name; callers collapse that
-// name to whatever family their own syntax needs.
-func resolveShellTarget(shellFlag, fileFlag string) (string, string, error) {
-	if fileFlag != "" {
-		abs, err := filepath.Abs(fileFlag)
-		if err != nil {
-			return "", "", fmt.Errorf("resolve --file: %w", err)
-		}
-		shell := shellFlag
-		if shell == "" {
-			shell = shellFromFilename(abs)
-		}
-		return abs, shell, nil
-	}
-	shell := shellFlag
-	if shell == "" {
-		shell = detectShell()
-	}
-	path, err := rcFileForShell(shell)
-	if err != nil {
-		return "", "", err
-	}
-	return path, shell, nil
-}
-
 // resolveAliasTarget resolves the target rc file and collapses its shell
 // to the alias family ("fish" or "posix") used for quoting and parsing.
 func resolveAliasTarget(shellFlag, fileFlag string) (string, string, error) {
-	target, shell, err := resolveShellTarget(shellFlag, fileFlag)
+	target, shell, err := shellrc.ResolveTarget(shellFlag, fileFlag)
 	if err != nil {
 		return "", "", err
 	}
-	return target, shellFamily(shell), nil
+	return target, shellrc.Family(shell), nil
 }
 
 // buildAliasLine assembles the exact text we will append for an alias

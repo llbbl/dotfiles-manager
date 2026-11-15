@@ -19,6 +19,7 @@ import (
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/dlog"
 	"github.com/llbbl/dotfiles-manager/internal/secrets"
+	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
@@ -442,20 +443,6 @@ func renderPathBlock(family, id string, updatedAt time.Time, direction string, d
 	}
 }
 
-// pathShellFamily maps a raw shell name to a PATH rendering family.
-// Unlike shellFamily, zsh does not collapse into posix: its native
-// `path` array promotes and dedupes in a way the POSIX body cannot.
-func pathShellFamily(shell string) string {
-	switch shell {
-	case "fish":
-		return "fish"
-	case "zsh":
-		return "zsh"
-	default:
-		return "posix"
-	}
-}
-
 // pathUseFragment reports whether `dfm path migrate` has moved the
 // managed entries into the generated fragment. A context with no config
 // attached answers false, which is the pre-migrate behaviour.
@@ -471,14 +458,14 @@ func pathUseFragment(ctx context.Context) bool {
 // explicit --file or --shell names a file and always wins.
 func resolvePathTarget(ctx context.Context, shellFlag, fileFlag string) (string, string, error) {
 	if shellFlag == "" && fileFlag == "" && pathUseFragment(ctx) {
-		frag := config.FragmentPath(pathFragmentName(pathShellFamily(detectShell())))
-		return frag, pathShellFamily(shellFromFilename(frag)), nil
+		frag := config.FragmentPath(pathFragmentName(shellrc.PathFamily(shellrc.Detect())))
+		return frag, shellrc.PathFamily(shellrc.FromFilename(frag)), nil
 	}
-	target, shell, err := resolveShellTarget(shellFlag, fileFlag)
+	target, shell, err := shellrc.ResolveTarget(shellFlag, fileFlag)
 	if err != nil {
 		return "", "", err
 	}
-	return target, pathShellFamily(shell), nil
+	return target, shellrc.PathFamily(shell), nil
 }
 
 // writeTrackedEdit tracks path if it is not tracked yet, snapshots it,
