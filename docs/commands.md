@@ -466,6 +466,8 @@ At runtime, only commands opening remote state call `lsm get`, with a 10-second
 timeout. An environment token (including one loaded through dotenv) overrides the
 reference. Missing lsm, failed lookups, empty output, and timeouts are errors;
 subprocess output and token values are never included in those errors.
+With lsm v0.12.0 or newer, a failed lookup names the cause (key missing, no store,
+lsm not initialised, or app/env unresolved); older lsm gives a generic error.
 
 ### `dfm sync`
 

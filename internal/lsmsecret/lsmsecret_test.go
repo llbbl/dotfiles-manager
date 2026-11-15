@@ -30,6 +30,7 @@ case "$STUB_MODE" in
  fail) printf 'LEAK-STDOUT'; exit 1;;
  empty) exit 0;;
  sleep) exec /bin/sleep 5;;
+ exit*) printf 'SECRET-121'; exit "${STUB_MODE#exit}";;
 esac
 if [ "$1" = set ]; then /bin/cat > "$STUB_INPUT"; printf 'LEAK-STDOUT'; else printf 'SECRET-110\n\n'; fi
 `
@@ -110,6 +111,46 @@ func TestGetFailures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+const genericErr = "lsm lookup for CUSTOM (app my-app, env test) failed; run 'lsm get --app … --env … CUSTOM' to see why"
+
+func TestGetExitCodes(t *testing.T) {
+	cases := []struct {
+		code string
+		want string
+	}{
+		{"2", "lsm has no CUSTOM for app my-app, env test; set it with 'lsm set --app my-app --env test CUSTOM'"},
+		{"3", "lsm has no store for app my-app, env test; set the key with 'lsm set --app my-app --env test CUSTOM'"},
+		{"4", "lsm is not initialised; run 'lsm init'"},
+		{"5", "lsm could not resolve app my-app, env test"},
+		{"1", genericErr},
+	}
+	for _, tc := range cases {
+		t.Run("exit"+tc.code, func(t *testing.T) {
+			stub(t)
+			t.Setenv("STUB_MODE", "exit"+tc.code)
+			got, err := Get(context.Background(), config.SecretRef{App: "my-app", Env: "test", Key: "CUSTOM"})
+			if err == nil || got != "" {
+				t.Fatal("expected empty result and error")
+			}
+			if err.Error() != tc.want {
+				t.Errorf("got %q, want %q", err.Error(), tc.want)
+			}
+			if strings.Contains(err.Error(), "LEAK-") || strings.Contains(err.Error(), "SECRET-121") {
+				t.Error("subprocess output reached error")
+			}
+		})
+	}
+}
+
+func TestSetExitCodeStaysGeneric(t *testing.T) {
+	stub(t)
+	t.Setenv("STUB_MODE", "exit2")
+	err := Set(context.Background(), config.SecretRef{App: "my-app", Env: "test", Key: "CUSTOM"}, "SECRET-110")
+	if err == nil || err.Error() != genericErr {
+		t.Fatalf("got %v, want generic error", err)
 	}
 }
 
