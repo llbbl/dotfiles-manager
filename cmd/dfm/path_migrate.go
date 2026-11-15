@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
@@ -79,7 +80,7 @@ func runPathMigrate(c *cobra.Command, shellFlag string, dryRun, yes, force bool)
 	if err != nil {
 		return err
 	}
-	rc, err := rcFileForShell(shell)
+	rc, err := shellrc.RCFile(shell)
 	if err != nil {
 		return err
 	}

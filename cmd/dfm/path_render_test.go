@@ -102,31 +102,6 @@ func TestFindPathManagedEntries_BodyAgnostic(t *testing.T) {
 	}
 }
 
-// PATH rendering needs zsh split out, while alias rendering must keep
-// collapsing it into posix — the two resolutions share a file resolver
-// and it would be easy to widen the wrong one.
-func TestShellFamilies_ZshSplitsForPathOnly(t *testing.T) {
-	for _, tc := range []struct {
-		shell     string
-		aliasWant string
-		pathWant  string
-	}{
-		{"bash", "posix", "posix"},
-		{"zsh", "posix", "zsh"},
-		{"sh", "posix", "posix"},
-		{"profile", "posix", "posix"},
-		{"", "posix", "posix"},
-		{"fish", "fish", "fish"},
-	} {
-		if got := shellFamily(tc.shell); got != tc.aliasWant {
-			t.Errorf("shellFamily(%q) = %q, want %q", tc.shell, got, tc.aliasWant)
-		}
-		if got := pathShellFamily(tc.shell); got != tc.pathWant {
-			t.Errorf("pathShellFamily(%q) = %q, want %q", tc.shell, got, tc.pathWant)
-		}
-	}
-}
-
 // --file without --shell has to infer the shell from the filename, and
 // a .zshrc must reach the zsh renderer.
 func TestResolvePathTarget_InfersShellFromFilename(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
@@ -179,12 +180,11 @@ func newPathHookRemoveCmd() *cobra.Command {
 }
 
 // resolveHookShell applies the --shell flag or falls back to $SHELL.
-// detectShell falls back to profile for anything unfamiliar; an explicit
-// flag gets no such latitude, since a typo would create and write a
-// startup file for the wrong shell.
+// An unfamiliar $SHELL later maps to ~/.profile via shellrc.RCFile, but an
+// explicit flag is validated, since a typo would write the wrong startup file.
 func resolveHookShell(cmdName, shellFlag string) (string, error) {
 	if shellFlag == "" {
-		return detectShell(), nil
+		return shellrc.Detect(), nil
 	}
 	if !knownPathHookShell(shellFlag) {
 		return "", exitf(exitResolveErr,
@@ -230,7 +230,7 @@ func runPathHook(c *cobra.Command, shellFlag string, dryRun, force, install bool
 // would overwrite the user's whole PATH configuration with an empty
 // fragment.
 func writePathFragment(c *cobra.Command, shell, family string, dryRun bool) error {
-	rc, err := rcFileForShell(shell)
+	rc, err := shellrc.RCFile(shell)
 	if err != nil {
 		return err
 	}
