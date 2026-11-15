@@ -589,10 +589,6 @@ func TestPathAdd_CorruptionGuardMultipleSameDirection(t *testing.T) {
 	}
 }
 
-// Fish targets are first-class as of dfm-mxf. Positive fish-flow
-// coverage now lives in path_add_fish_test.go; this stub is left as a
-// breadcrumb so future grep'rs find their way.
-
 const missingDirWarnTail = " does not exist yet; POSIX shells add it now, fish skips it until it exists"
 
 // isolatePathHome points HOME and XDG at a temp dir so "~/" tokens and

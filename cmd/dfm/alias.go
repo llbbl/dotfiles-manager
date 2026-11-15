@@ -171,11 +171,9 @@ func aliasMatchRe(family, name string) *regexp.Regexp {
 	return regexp.MustCompile(`^\s*alias\s+` + q + `\s*=`)
 }
 
-// aliasLegacyBlockRe matches the OLD per-alias fenced block format
-// emitted prior to the shared-block migration (dfm-yda). We still
-// recognise these so dup-detect, remove, and --replace continue to
-// work on rc files written by older dfm versions. New writes never
-// produce this shape.
+// aliasLegacyBlockRe matches the per-alias fenced block that older dfm
+// versions wrote before aliases shared one block. Dup-detect, remove and
+// --replace still recognise it; new writes never produce it.
 func aliasLegacyBlockRe(name string) *regexp.Regexp {
 	q := regexp.QuoteMeta(name)
 	return regexp.MustCompile(

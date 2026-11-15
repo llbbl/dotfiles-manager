@@ -208,10 +208,8 @@ func normalizePathDir(dir string) string {
 // doesn't pair — opens without a matching close, closes without a
 // preceding open, mismatched ids — is dropped (logged at debug).
 //
-// The helper is shell-agnostic by design: it never looks at the
-// for-loop body between the markers. That keeps the skeleton
-// decoupled from bash/zsh vs fish block bodies, which land in
-// follow-up tasks (dfm-5w3, dfm-mxf).
+// The helper never looks at the body between the markers, so it works
+// unchanged for the POSIX and fish block bodies.
 func findPathManagedEntries(content []byte) []PathManagedEntry {
 	type openCandidate struct {
 		marker     PathMarkerLine
