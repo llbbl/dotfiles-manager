@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.5] - 2026-11-15
+
+### Refactoring
+
+- Move shell detection and rc-file resolution into internal/shellrc
 ## [1.14.4] - 2026-11-15
 
 ### Refactoring
