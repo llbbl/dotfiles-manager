@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 func runPathFragmentCmd(t *testing.T, ctx context.Context, args ...string) string {
@@ -73,7 +75,7 @@ func TestPathFragment_FishSelectsOtherFamily(t *testing.T) {
 	if !strings.Contains(fish, "fish_add_path") || strings.Contains(fish, "; do") {
 		t.Errorf("fish fragment is not fish syntax:\n%s", fish)
 	}
-	if !strings.Contains(posix, pathFragmentPosixName) || !strings.Contains(fish, pathFragmentFishName) {
+	if !strings.Contains(posix, pathblock.FragmentPosixName) || !strings.Contains(fish, pathblock.FragmentFishName) {
 		t.Errorf("headers do not name their own fragment files:\n%s\n%s", posix, fish)
 	}
 }
@@ -90,12 +92,12 @@ func TestPathFragment_RoundTrips(t *testing.T) {
 	)
 
 	got := runPathFragmentCmd(t, ctx, "--file", canonical)
-	rows := pathListRows(findPathManagedEntries([]byte(got)))
+	rows := pathblock.ListRows(pathblock.FindEntries([]byte(got)))
 
-	want := []pathListRow{
-		{Dir: "/a", Direction: pathDirectionPrepend, MarkerID: pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})},
-		{Dir: "/b", Direction: pathDirectionPrepend, MarkerID: pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})},
-		{Dir: "/c", Direction: pathDirectionAppend, MarkerID: pathMarkerID(pathDirectionAppend, []string{"/c"})},
+	want := []pathblock.Row{
+		{Dir: "/a", Direction: pathblock.DirectionPrepend, MarkerID: pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})},
+		{Dir: "/b", Direction: pathblock.DirectionPrepend, MarkerID: pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})},
+		{Dir: "/c", Direction: pathblock.DirectionAppend, MarkerID: pathblock.MarkerID(pathblock.DirectionAppend, []string{"/c"})},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("got %d rows, want %d:\n%s", len(rows), len(want), got)
@@ -159,7 +161,7 @@ func TestPathFragment_FamilyFollowsTarget(t *testing.T) {
 	}
 }
 
-// parsePathOpenMarker does not validate direction=, so a hand-edited
+// pathblock.ParseOpen does not validate direction=, so a hand-edited
 // marker can carry anything. dfm path list buckets a non-append
 // direction as prepend; the fragment has to render it, not drop it.
 func TestPathFragment_UnknownDirectionRendersAsPrepend(t *testing.T) {

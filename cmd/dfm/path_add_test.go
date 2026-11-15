@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
@@ -59,7 +60,7 @@ func TestPathAdd_FirstAddCreatesEntry(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/a"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
 	openTok := "# dfm:path:" + wantID + " >>>"
 	closeTok := "# dfm:path:" + wantID + " <<<"
 	if !bytes.Contains(got, []byte(openTok)) {
@@ -82,7 +83,7 @@ func TestPathAdd_FirstAddCreatesEntry(t *testing.T) {
 		}
 	}
 	// Exactly one managed entry.
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -114,7 +115,7 @@ func TestPathAdd_SecondAddMutatesInPlace(t *testing.T) {
 	if err := cmd1.Execute(); err != nil {
 		t.Fatalf("first add: %v", err)
 	}
-	oldID := pathMarkerID(pathDirectionPrepend, []string{"/a"})
+	oldID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
 
 	// Second add: /b.
 	cmd2 := newPathCmd()
@@ -137,11 +138,11 @@ func TestPathAdd_SecondAddMutatesInPlace(t *testing.T) {
 	}
 
 	// Exactly one managed entry.
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1:\n%s", len(entries), got)
 	}
-	newID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
+	newID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
 	if entries[0].Marker.ID != newID {
 		t.Errorf("new marker id = %q, want %q", entries[0].Marker.ID, newID)
 	}
@@ -221,7 +222,7 @@ func TestPathAdd_AppendCreatesSeparateEntry(t *testing.T) {
 	}
 
 	got, _ := os.ReadFile(canonical)
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2:\n%s", len(entries), got)
 	}
@@ -229,7 +230,7 @@ func TestPathAdd_AppendCreatesSeparateEntry(t *testing.T) {
 	for _, e := range entries {
 		directions[e.Marker.Direction] = true
 	}
-	if !directions[pathDirectionPrepend] || !directions[pathDirectionAppend] {
+	if !directions[pathblock.DirectionPrepend] || !directions[pathblock.DirectionAppend] {
 		t.Errorf("expected both prepend and append entries, got: %v", directions)
 	}
 	if entries[0].Marker.ID == entries[1].Marker.ID {
@@ -380,7 +381,7 @@ func TestPathAdd_ForceBypassesSecretScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read forced: %v", err)
 	}
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1:\n%s", len(entries), got)
 	}
@@ -480,7 +481,7 @@ func TestPathAdd_AuditFields(t *testing.T) {
 
 	data, _ := os.ReadFile(logPath)
 	first := string(data)
-	idA := pathMarkerID(pathDirectionPrepend, []string{"/a"})
+	idA := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
 	wantFirst := []string{
 		`"action":"path.add"`,
 		`"dir":"/a"`,
@@ -507,7 +508,7 @@ func TestPathAdd_AuditFields(t *testing.T) {
 	}
 	data, _ = os.ReadFile(logPath)
 	second := string(data)
-	idAB := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
+	idAB := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
 	wantSecond := []string{
 		`"dir":"/b"`,
 		`"marker_id_new":"` + idAB + `"`,
@@ -547,7 +548,7 @@ esac
 	if !bytes.Contains(got, []byte(pnpmBlock)) {
 		t.Errorf("pnpm block was mutated:\nbefore: %s\nafter:  %s", pnpmBlock, got)
 	}
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 dfm-managed entry, got %d", len(entries))
 	}
@@ -559,10 +560,10 @@ func TestPathAdd_CorruptionGuardMultipleSameDirection(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 
 	// Hand-craft two prepend entries with different ids by varying
-	// dirs. Use formatPathOpenMarker / formatPathCloseMarker so the
+	// dirs. Use pathblock.FormatOpen / pathblock.FormatClose so the
 	// fixture is guaranteed to parse.
-	id1 := pathMarkerID(pathDirectionPrepend, []string{"/a"})
-	id2 := pathMarkerID(pathDirectionPrepend, []string{"/b"})
+	id1 := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
+	id2 := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/b"})
 	open1 := "# dfm:path:" + id1 + " >>>  updated=2026-01-01T00:00:00Z  direction=prepend  dirs=/a\n"
 	close1 := "# dfm:path:" + id1 + " <<<\n"
 	open2 := "# dfm:path:" + id2 + " >>>  updated=2026-01-01T00:00:00Z  direction=prepend  dirs=/b\n"

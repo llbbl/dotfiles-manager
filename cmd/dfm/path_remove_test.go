@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // §7 case #8: shrink list.
@@ -35,11 +37,11 @@ func TestPathRemove_ShrinkList(t *testing.T) {
 	}
 
 	got, _ := os.ReadFile(canonical)
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1:\n%s", len(entries), got)
 	}
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/c"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/c"})
 	if entries[0].Marker.ID != wantID {
 		t.Errorf("marker id = %q, want %q", entries[0].Marker.ID, wantID)
 	}
@@ -88,7 +90,7 @@ func TestPathRemove_DeleteBlock(t *testing.T) {
 	if bytes.Contains(got, []byte("dfm:path:")) {
 		t.Errorf("expected no dfm:path markers after delete, got:\n%s", got)
 	}
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 0 {
 		t.Errorf("got %d entries, want 0", len(entries))
 	}
@@ -216,7 +218,7 @@ func TestPathRemove_Fish_DeleteBlock(t *testing.T) {
 }
 
 // Cross-spelling: user adds `/Users/foo/x` and removes `~/x` (with
-// HOME=/Users/foo) — must match via normalizePathDir.
+// HOME=/Users/foo) — must match via pathblock.NormalizeDir.
 func TestPathRemove_CrossSpelling(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -320,8 +322,8 @@ func TestPathRemove_AuditFields(t *testing.T) {
 	}
 	data, _ := os.ReadFile(logPath)
 	logStr := string(data)
-	idAB := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
-	idA := pathMarkerID(pathDirectionPrepend, []string{"/a"})
+	idAB := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
+	idA := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
 	for _, frag := range []string{
 		`"action":"path.remove"`,
 		`"dir":"/b"`,

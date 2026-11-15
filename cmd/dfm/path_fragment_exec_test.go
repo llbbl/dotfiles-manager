@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // fragSpec is one managed entry to seed into a synthetic rc file.
@@ -13,11 +15,11 @@ type fragSpec struct {
 
 // renderRCBlocks builds the rc-file content a fragment is derived from,
 // so the tests exercise the real render → parse → re-render path rather
-// than constructing PathManagedEntry values by hand.
+// than constructing pathblock.Entry values by hand.
 func renderRCBlocks(family string, specs []fragSpec) string {
 	var b strings.Builder
 	for _, s := range specs {
-		b.WriteString(renderPathBlock(family, pathMarkerID(s.direction, s.dirs),
+		b.WriteString(pathblock.Render(family, pathblock.MarkerID(s.direction, s.dirs),
 			goldenTime, s.direction, s.dirs))
 	}
 	return b.String()
@@ -25,7 +27,7 @@ func renderRCBlocks(family string, specs []fragSpec) string {
 
 func fragmentFor(family string, specs []fragSpec) (rc, fragment string) {
 	rc = renderRCBlocks(family, specs)
-	return rc, renderPathFragment(family, findPathManagedEntries([]byte(rc)))
+	return rc, renderPathFragment(family, pathblock.FindEntries([]byte(rc)))
 }
 
 // runFragmentOrderTable replays a behaviour table through the fragment
@@ -40,7 +42,7 @@ func runFragmentOrderTable(t *testing.T, interp pathInterpreter, rcFamily, fragF
 			dirs := pathDirs(t, all...)
 			add := dirs[tc.dir]
 			rc := renderRCBlocks(rcFamily, []fragSpec{{tc.add, []string{add}}})
-			fragment := renderPathFragment(fragFamily, findPathManagedEntries([]byte(rc)))
+			fragment := renderPathFragment(fragFamily, pathblock.FindEntries([]byte(rc)))
 			start := strings.Join(mapDirs(dirs, tc.start), ":")
 			keep := mapDirs(dirs, all)
 			want := mapDirs(dirs, tc.want)
@@ -105,8 +107,8 @@ func TestPathFragment_Fish_MatchesRCBlocks(t *testing.T) {
 func TestPathFragment_PrependRunsBeforeAppend(t *testing.T) {
 	specs := func(dirs map[string]string) []fragSpec {
 		return []fragSpec{
-			{pathDirectionPrepend, []string{dirs["a"], dirs["b"]}},
-			{pathDirectionAppend, []string{dirs["b"]}},
+			{pathblock.DirectionPrepend, []string{dirs["a"], dirs["b"]}},
+			{pathblock.DirectionAppend, []string{dirs["b"]}},
 		}
 	}
 	run := func(t *testing.T, interp pathInterpreter) {

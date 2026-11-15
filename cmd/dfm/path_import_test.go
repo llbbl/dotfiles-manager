@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // runImport executes `dfm path import` against the given canonical path
@@ -186,7 +188,7 @@ func TestPathImport_ManagedBlockSkippedAsOne(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	dirs := []string{"/a", "/b", "/c"}
 	managedBlock := wellFormedPathBlock(
-		pathDirectionPrepend, dirs,
+		pathblock.DirectionPrepend, dirs,
 		"for __dfm_d in /a /b /c; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	canonical, _ := writeTracked(t, ctx, "# bashrc\n"+managedBlock)
@@ -207,7 +209,7 @@ func TestPathImport_ManagedBlockSkippedAsOne(t *testing.T) {
 	if got.DirCount != 3 {
 		t.Errorf("dir_count = %d, want 3", got.DirCount)
 	}
-	if got.Direction != pathDirectionPrepend {
+	if got.Direction != pathblock.DirectionPrepend {
 		t.Errorf("direction = %q, want prepend", got.Direction)
 	}
 	if got.MarkerID == "" {
@@ -294,7 +296,7 @@ func TestPathImport_MixedRcAllBuckets(t *testing.T) {
 	// One of each bucket: bare, guarded, eval, source, plugin-loader,
 	// unknown (command-substitution), plus a managed block.
 	managed := wellFormedPathBlock(
-		pathDirectionAppend, []string{"/managed"},
+		pathblock.DirectionAppend, []string{"/managed"},
 		"for __dfm_d in /managed; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	rc := `# bashrc
@@ -411,7 +413,7 @@ func TestPathImport_EmptyRcEmitsSentinel(t *testing.T) {
 func TestPathImport_OnlyManagedNoProposal(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	managed := wellFormedPathBlock(
-		pathDirectionPrepend, []string{"/already"},
+		pathblock.DirectionPrepend, []string{"/already"},
 		"for __dfm_d in /already; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	canonical, _ := writeTracked(t, ctx, "# bashrc\n"+managed)

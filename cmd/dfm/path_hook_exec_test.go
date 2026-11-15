@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // hookPATH runs argv under a hooked HOME and returns the PATH it
@@ -34,9 +36,9 @@ func installZshHooks(t *testing.T) (home, marker string) {
 	t.Helper()
 	ctx, home := newHookEnv(t)
 	marker = pathDirs(t, "marker")["marker"]
-	writeFileBytes(t, filepath.Join(home, ".zshrc"), renderPathBlock("zsh",
-		pathMarkerID(pathDirectionPrepend, []string{marker}), goldenTime,
-		pathDirectionPrepend, []string{marker}))
+	writeFileBytes(t, filepath.Join(home, ".zshrc"), pathblock.Render("zsh",
+		pathblock.MarkerID(pathblock.DirectionPrepend, []string{marker}), goldenTime,
+		pathblock.DirectionPrepend, []string{marker}))
 	runHookCmd(t, ctx, "install", "--shell", "zsh")
 	return home, marker
 }
@@ -81,12 +83,12 @@ func TestPathHook_Fish_FragmentReachesPATH(t *testing.T) {
 	ctx, home := newHookEnv(t)
 	marker := pathDirs(t, "marker")["marker"]
 	configFish := filepath.Join(home, ".config", "fish", "config.fish")
-	writeFileBytes(t, configFish, renderPathBlock("fish",
-		pathMarkerID(pathDirectionPrepend, []string{marker}), goldenTime,
-		pathDirectionPrepend, []string{marker}))
+	writeFileBytes(t, configFish, pathblock.Render("fish",
+		pathblock.MarkerID(pathblock.DirectionPrepend, []string{marker}), goldenTime,
+		pathblock.DirectionPrepend, []string{marker}))
 
 	runHookCmd(t, ctx, "install", "--shell", "fish")
-	writeFileBytes(t, configFish, renderPathHook("fish"))
+	writeFileBytes(t, configFish, pathblock.RenderHook("fish"))
 
 	got := strings.Fields(hookPATH(t, home, fish, "-c", "echo $PATH"))
 	if len(got) == 0 || got[0] != marker {
@@ -120,7 +122,7 @@ func TestPathHook_MissingFragment_LeavesPATHUntouched(t *testing.T) {
 				echoCmd:   `echo "$PATH"`,
 				sourceCmd: ".",
 				split:     splitColon,
-			}, renderPathHook("posix"), start, keep, 1)
+			}, pathblock.RenderHook("posix"), start, keep, 1)
 			if !equalStrings(got, keep) {
 				t.Errorf("PATH = %v, want %v", got, keep)
 			}
@@ -135,7 +137,7 @@ func TestPathHook_MissingFragment_LeavesPATHUntouched(t *testing.T) {
 			echoCmd:   `echo "$PATH"`,
 			sourceCmd: ".",
 			split:     splitColon,
-		}, renderPathHook("posix"), start, keep, 1)
+		}, pathblock.RenderHook("posix"), start, keep, 1)
 		if !equalStrings(got, keep) {
 			t.Errorf("PATH = %v, want %v", got, keep)
 		}
@@ -149,7 +151,7 @@ func TestPathHook_MissingFragment_LeavesPATHUntouched(t *testing.T) {
 			echoCmd:   `echo $PATH`,
 			sourceCmd: "source",
 			split:     splitFields,
-		}, renderPathHook("fish"), start, keep, 1)
+		}, pathblock.RenderHook("fish"), start, keep, 1)
 		if !equalStrings(got, keep) {
 			t.Errorf("PATH = %v, want %v", got, keep)
 		}

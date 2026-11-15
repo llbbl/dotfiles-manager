@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 	"github.com/llbbl/dotfiles-manager/internal/config"
 )
 
@@ -106,7 +107,7 @@ func TestPathHookRemove_RestoresOriginalBytes(t *testing.T) {
 			before := readFileBytes(t, zshenv)
 
 			runHookCmd(t, ctx, "install", "--shell", "zsh")
-			if !bytes.Contains(readFileBytes(t, zshenv), []byte(pathHookOpenMarker)) {
+			if !bytes.Contains(readFileBytes(t, zshenv), []byte(pathblock.HookOpenMarker)) {
 				t.Fatalf("install did not write the hook")
 			}
 
@@ -176,7 +177,7 @@ func TestPathHookInstall_DryRun_WritesNothing(t *testing.T) {
 	if _, err := os.Stat(zshenv); !os.IsNotExist(err) {
 		t.Errorf("dry-run created .zshenv: %v", err)
 	}
-	if _, err := os.Stat(config.FragmentPath(pathFragmentPosixName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(config.FragmentPath(pathblock.FragmentPosixName)); !os.IsNotExist(err) {
 		t.Errorf("dry-run wrote the fragment: %v", err)
 	}
 	if isTracked(t, ctx, zshenv) {
@@ -190,11 +191,11 @@ func TestPathHookInstall_DryRun_WritesNothing(t *testing.T) {
 func TestPathHookInstall_FragmentNotTracked(t *testing.T) {
 	ctx, home := newHookEnv(t)
 	writeFileBytes(t, filepath.Join(home, ".zshrc"),
-		renderPathBlock("zsh", "deadbeef", goldenTime, pathDirectionPrepend, []string{"/marker/bin"}))
+		pathblock.Render("zsh", "deadbeef", goldenTime, pathblock.DirectionPrepend, []string{"/marker/bin"}))
 
 	runHookCmd(t, ctx, "install", "--shell", "zsh")
 
-	fragment := config.FragmentPath(pathFragmentPosixName)
+	fragment := config.FragmentPath(pathblock.FragmentPosixName)
 	if !bytes.Contains(readFileBytes(t, fragment), []byte("/marker/bin")) {
 		t.Error("fragment does not carry the managed dir")
 	}
@@ -330,7 +331,7 @@ func TestPathHookInstall_SecretInRcFile(t *testing.T) {
 	}
 
 	runHookCmd(t, ctx, "install", "--shell", "zsh", "--force")
-	if !bytes.Contains(readFileBytes(t, zshenv), []byte(pathHookOpenMarker)) {
+	if !bytes.Contains(readFileBytes(t, zshenv), []byte(pathblock.HookOpenMarker)) {
 		t.Error("--force did not install the hook")
 	}
 }

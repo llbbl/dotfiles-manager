@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // First add into a fresh fish target creates a managed entry with the
@@ -30,7 +32,7 @@ func TestPathAdd_Fish_FirstAddCreatesEntry(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/a"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
 	openTok := "# dfm:path:" + wantID + " >>>"
 	closeTok := "# dfm:path:" + wantID + " <<<"
 	if !bytes.Contains(got, []byte(openTok)) {
@@ -59,7 +61,7 @@ func TestPathAdd_Fish_FirstAddCreatesEntry(t *testing.T) {
 		}
 	}
 
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -82,7 +84,7 @@ func TestPathAdd_Fish_SecondAddMutatesInPlace(t *testing.T) {
 	if err := cmd1.Execute(); err != nil {
 		t.Fatalf("first add: %v", err)
 	}
-	oldID := pathMarkerID(pathDirectionPrepend, []string{"/a"})
+	oldID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
 
 	cmd2 := newPathCmd()
 	cmd2.SetContext(ctx)
@@ -97,11 +99,11 @@ func TestPathAdd_Fish_SecondAddMutatesInPlace(t *testing.T) {
 	if bytes.Contains(got, []byte("dfm:path:"+oldID)) {
 		t.Errorf("old marker id %q still present:\n%s", oldID, got)
 	}
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1:\n%s", len(entries), got)
 	}
-	newID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
+	newID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
 	if entries[0].Marker.ID != newID {
 		t.Errorf("new marker id = %q, want %q", entries[0].Marker.ID, newID)
 	}
