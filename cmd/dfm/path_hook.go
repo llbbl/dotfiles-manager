@@ -5,95 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
 	"github.com/llbbl/dotfiles-manager/internal/fsx"
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/store"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
 )
-
-// The hook uses a fixed marker, not the rotating id the dfm:path blocks
-// carry: there is exactly one hook per file and no content to hash.
-const (
-	pathHookOpenMarker  = "# >>> dfm:env >>>"
-	pathHookCloseMarker = "# <<< dfm:env <<<"
-)
-
-// pathHookBlockRe matches the hook block together with the single
-// newline the installer writes in front of it, so a remove restores the
-// file's original bytes exactly.
-var pathHookBlockRe = regexp.MustCompile(
-	`(?ms)\n?^[ \t]*` + regexp.QuoteMeta(pathHookOpenMarker) + `\n` +
-		`.*?^[ \t]*` + regexp.QuoteMeta(pathHookCloseMarker) + `\n?`)
-
-// pathHookPosixBody sources the generated fragment from any POSIX rc
-// file. The fragment path is resolved at shell startup rather than
-// baked in at install time, because these rc files sync to other
-// machines. .zshenv runs on every zsh invocation including every
-// script, so the body stays parameter expansion plus one stat.
-var pathHookPosixBody = fmt.Sprintf(`__dfm_env="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/%s"
-[ -r "$__dfm_env" ] && . "$__dfm_env"
-unset __dfm_env
-`, pathFragmentPosixName)
-
-// pathHookFishBody is the fish equivalent. fish has no ${VAR:-default},
-// so the fallback needs its own `test -n`.
-var pathHookFishBody = fmt.Sprintf(`set -l __dfm_base $XDG_CONFIG_HOME
-test -n "$__dfm_base"; or set __dfm_base $HOME/.config
-test -r $__dfm_base/dotfiles/%s; and source $__dfm_base/dotfiles/%s
-set -e __dfm_base
-`, pathFragmentFishName, pathFragmentFishName)
-
-// renderPathHook returns the complete marker-delimited hook block,
-// trailing newline included.
-func renderPathHook(family string) string {
-	body := pathHookPosixBody
-	if family == "fish" {
-		body = pathHookFishBody
-	}
-	return pathHookOpenMarker + "\n" + body + pathHookCloseMarker + "\n"
-}
-
-// installPathHook returns content with exactly one hook block present.
-// An existing block is replaced in place so a body change in a newer
-// dfm reaches rc files that already carry the hook.
-func installPathHook(content []byte, family string) []byte {
-	block := []byte(renderPathHook(family))
-	if loc := pathHookBlockRe.FindIndex(content); loc != nil {
-		out := make([]byte, 0, len(content)+len(block))
-		out = append(out, content[:loc[0]]...)
-		if content[loc[0]] == '\n' {
-			out = append(out, '\n')
-		}
-		out = append(out, block...)
-		return append(out, content[loc[1]:]...)
-	}
-	out := make([]byte, 0, len(content)+len(block)+1)
-	out = append(out, content...)
-	if len(content) > 0 {
-		out = append(out, '\n')
-	}
-	return append(out, block...)
-}
-
-// removePathHook strips the hook block and the newline installPathHook
-// wrote in front of it.
-func removePathHook(content []byte) []byte {
-	return pathHookBlockRe.ReplaceAll(content, nil)
-}
-
-// knownPathHookShell reports whether an explicitly requested shell is
-// one pathHookFiles actually understands.
-func knownPathHookShell(shell string) bool {
-	switch shell {
-	case "bash", "zsh", "fish", "sh", "profile":
-		return true
-	}
-	return false
-}
 
 // pathHookFiles returns the rc files the hook belongs in for a shell,
 // plus the fragment syntax family they source.
@@ -186,7 +106,7 @@ func resolveHookShell(cmdName, shellFlag string) (string, error) {
 	if shellFlag == "" {
 		return shellrc.Detect(), nil
 	}
-	if !knownPathHookShell(shellFlag) {
+	if !pathblock.KnownHookShell(shellFlag) {
 		return "", exitf(exitResolveErr,
 			"%s: unknown --shell %q (want bash, zsh, fish, sh or profile)", cmdName, shellFlag)
 	}
@@ -251,7 +171,7 @@ func writePathFragment(c *cobra.Command, shell, family string, dryRun bool) erro
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(dest), err)
 	}
-	body := renderPathFragment(family, findPathManagedEntries(data))
+	body := renderPathFragment(family, pathblock.FindEntries(data))
 	if err := fsx.AtomicWrite(dest, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
 	}
@@ -283,9 +203,9 @@ func applyPathHookFile(c *cobra.Command, s *store.Store, path, family string, dr
 		return fmt.Errorf("read %s: %w", target, readErr)
 	}
 
-	updated := removePathHook(current)
+	updated := pathblock.RemoveHook(current)
 	if install {
-		updated = installPathHook(current, family)
+		updated = pathblock.InstallHook(current, family)
 	}
 	if exists && bytes.Equal(current, updated) {
 		fmt.Fprintf(out, "no change: %s\n", display)

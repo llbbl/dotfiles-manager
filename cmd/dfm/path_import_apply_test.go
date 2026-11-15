@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // runImportWithStdin executes `dfm path import` with the given args and
@@ -75,12 +77,12 @@ func TestPathImportApply_HappyPathWithYes(t *testing.T) {
 
 	// (b) One dfm:path:<id> block with direction=prepend and 3 dirs in
 	// proposal order.
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d managed entries, want 1:\n%s", len(entries), got)
 	}
 	e := entries[0]
-	if e.Marker.Direction != pathDirectionPrepend {
+	if e.Marker.Direction != pathblock.DirectionPrepend {
 		t.Errorf("direction = %q, want prepend", e.Marker.Direction)
 	}
 	wantDirs := []string{"/opt/local/bin", "/usr/local/sbin", "$HOME/.cargo/bin"}
@@ -239,7 +241,7 @@ func TestPathImportApply_YesAcceptances(t *testing.T) {
 				t.Errorf("stdout missing 'applied:' for answer %q:\n%s", answer, stdout)
 			}
 			got, _ := os.ReadFile(canonical)
-			entries := findPathManagedEntries(got)
+			entries := pathblock.FindEntries(got)
 			if len(entries) != 1 {
 				t.Errorf("got %d managed entries, want 1 for answer %q:\n%s",
 					len(entries), answer, got)
@@ -299,7 +301,7 @@ func TestPathImportApply_DryRunBeatsYes(t *testing.T) {
 func TestPathImportApply_RefusesWhenPrependEntryExists(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	managed := wellFormedPathBlock(
-		pathDirectionPrepend, []string{"/already"},
+		pathblock.DirectionPrepend, []string{"/already"},
 		"for __dfm_d in /already; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	original := "# bashrc\n" + managed + `export PATH="/opt/x:$PATH"
@@ -329,7 +331,7 @@ func TestPathImportApply_RefusesWhenPrependEntryExists(t *testing.T) {
 func TestPathImportApply_EmptyImportableNoPrompt(t *testing.T) {
 	ctx, _, logPath := setupEditCmdEnv(t)
 	managed := wellFormedPathBlock(
-		pathDirectionAppend, []string{"/managed"},
+		pathblock.DirectionAppend, []string{"/managed"},
 		"for __dfm_d in /managed; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	// Only managed + dynamic + unknown — no IMPORTABLE.
@@ -383,7 +385,7 @@ export PATH="/opt/y:$PATH"
 	if res.DirsCount != 2 {
 		t.Errorf("dirs_count = %d, want 2", res.DirsCount)
 	}
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/opt/x", "/opt/y"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/opt/x", "/opt/y"})
 	if res.MarkerID != wantID {
 		t.Errorf("marker_id = %q, want %q", res.MarkerID, wantID)
 	}
@@ -429,7 +431,7 @@ export PATH="/opt/y:$PATH"
 		t.Fatalf("read log: %v", err)
 	}
 	log := string(data)
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/opt/x", "/opt/y"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/opt/x", "/opt/y"})
 	wantFields := []string{
 		`"action":"path.import"`,
 		`"sub_action":"import"`,
@@ -453,7 +455,7 @@ export PATH="/opt/y:$PATH"
 func TestPathImportApply_AppendEntryUntouched(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	appendBlock := wellFormedPathBlock(
-		pathDirectionAppend, []string{"/managed-append"},
+		pathblock.DirectionAppend, []string{"/managed-append"},
 		"for __dfm_d in /managed-append; do : ; done\nunset __dfm_d\nexport PATH\n",
 	)
 	original := `# bashrc
@@ -470,7 +472,7 @@ export PATH="/opt/x:$PATH"
 			appendBlock, got)
 	}
 	// And the import succeeded — exactly two managed entries now.
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 managed entries (existing append + new prepend), got %d:\n%s",
 			len(entries), got)

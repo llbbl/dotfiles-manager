@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 	"github.com/llbbl/dotfiles-manager/internal/snapshot"
 	"github.com/spf13/cobra"
 )
@@ -27,8 +28,8 @@ import (
 //     shell parser. We recognize a small set of well-known shapes
 //     (bare prepend / pnpm-style guarded block / dynamic activations)
 //     and bucket anything else as UNKNOWN. We do NOT evaluate shell.
-//   - The managed-block detector reuses findPathManagedEntries from
-//     path.go so the marker format stays defined in exactly one place.
+//   - The managed-block detector reuses pathblock.FindEntries so the
+//     marker format stays defined in exactly one place.
 //   - Dir literal resolution computes a normalized form for ordering
 //     and dedup-detection only; the user's original literal is what
 //     ends up in the proposal so re-rendering is byte-faithful.
@@ -369,7 +370,7 @@ func scanPathImport(file string, content []byte) pathImportReport {
 	// (a) emit one SKIP entry per block instead of one per body line,
 	// and (b) suppress any IMPORTABLE/UNKNOWN classification of lines
 	// inside a managed block (the body iterates dirs we already own).
-	managed := findPathManagedEntries(content)
+	managed := pathblock.FindEntries(content)
 
 	// Build a (line-start byte offset → line index) map by splitting
 	// once. We keep both the line strings and the byte offset of each
@@ -443,10 +444,10 @@ func scanPathImport(file string, content []byte) pathImportReport {
 				EndLine:   block.EndLine,
 				Raw:       block.Raw,
 				Dir:       block.Dir,
-				Direction: pathDirectionPrepend,
+				Direction: pathblock.DirectionPrepend,
 				Shape:     pathImportShapeGuarded,
 			}
-			normalized := normalizePathDir(block.Dir)
+			normalized := pathblock.NormalizeDir(block.Dir)
 			if first, ok := importedSeen[normalized]; ok {
 				entry.dupOf = first
 			} else {
@@ -464,10 +465,10 @@ func scanPathImport(file string, content []byte) pathImportReport {
 				EndLine:   i + 1,
 				Raw:       raw,
 				Dir:       dir,
-				Direction: pathDirectionPrepend,
+				Direction: pathblock.DirectionPrepend,
 				Shape:     pathImportShapeBare,
 			}
-			normalized := normalizePathDir(dir)
+			normalized := pathblock.NormalizeDir(dir)
 			if first, ok := importedSeen[normalized]; ok {
 				entry.dupOf = first
 			} else {
@@ -502,7 +503,7 @@ func scanPathImport(file string, content []byte) pathImportReport {
 	// first-occurrence order.
 	if firsts := uniqueImportableDirs(report.Importable); len(firsts) > 0 {
 		report.Proposal = &pathImportProposal{
-			Direction: pathDirectionPrepend,
+			Direction: pathblock.DirectionPrepend,
 			Dirs:      firsts,
 		}
 	}
@@ -533,7 +534,7 @@ func uniqueImportableDirs(entries []pathImportEntry) []string {
 		if e.dupOf != 0 {
 			continue
 		}
-		n := normalizePathDir(e.Dir)
+		n := pathblock.NormalizeDir(e.Dir)
 		if seen[n] {
 			continue
 		}
@@ -835,8 +836,8 @@ func runPathImportApply(c *cobra.Command, target, family string, current []byte,
 	// Corruption-shape refusal: if rc already has a direction=prepend
 	// dfm-managed entry, refuse — path add is the correct way to add
 	// dirs to an existing managed entry.
-	for _, e := range findPathManagedEntries(current) {
-		if e.Marker.Direction == pathDirectionPrepend {
+	for _, e := range pathblock.FindEntries(current) {
+		if e.Marker.Direction == pathblock.DirectionPrepend {
 			return exitf(exitResolveErr,
 				"path import: rc file already has a dfm-managed prepend entry — use 'dfm path add' to add dirs instead, or 'dfm path remove' first")
 		}
@@ -862,8 +863,8 @@ func runPathImportApply(c *cobra.Command, target, family string, current []byte,
 	}
 
 	dirs := report.Proposal.Dirs
-	newID := pathMarkerID(pathDirectionPrepend, dirs)
-	newBlock := renderPathBlock(family, newID, time.Now().UTC(), pathDirectionPrepend, dirs)
+	newID := pathblock.MarkerID(pathblock.DirectionPrepend, dirs)
+	newBlock := pathblock.Render(family, newID, time.Now().UTC(), pathblock.DirectionPrepend, dirs)
 
 	newContent := spliceImportableLines(current, report.Importable, newBlock)
 
@@ -879,7 +880,7 @@ func runPathImportApply(c *cobra.Command, target, family string, current []byte,
 		"marker_id_old": "",
 		"lines_removed": len(report.Importable),
 		"dirs_count":    len(dirs),
-		"direction":     pathDirectionPrepend,
+		"direction":     pathblock.DirectionPrepend,
 		"sub_action":    "import",
 	})
 	if err != nil {
@@ -951,7 +952,7 @@ func spliceImportableLines(current []byte, importable []pathImportEntry, newBloc
 
 	// Build the new line list. The new block is inserted as a single
 	// pseudo-line at firstIdx (it already carries its own trailing
-	// newline from renderPathBlock, so we re-split it into lines for
+	// newline from pathblock.Render, so we re-split it into lines for
 	// uniform handling and then trim the final empty slice element
 	// produced by the trailing "\n").
 	blockLines := strings.Split(strings.TrimSuffix(newBlock, "\n"), "\n")

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 	"github.com/llbbl/dotfiles-manager/internal/shellrc"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 	"github.com/spf13/cobra"
@@ -17,28 +18,6 @@ func activeConfigPath() (string, error) {
 		return flagConfigPath, nil
 	}
 	return config.DefaultPath()
-}
-
-// removePathBlocks splices every managed block out of content, last
-// first so the earlier byte offsets stay valid. A blank line that an
-// add wrote as a separator in front of a block goes with it, so the
-// surrounding file comes back to the bytes it had before dfm touched it.
-func removePathBlocks(content []byte, entries []PathManagedEntry) []byte {
-	out := content
-	for i := len(entries) - 1; i >= 0; i-- {
-		start, end := entries[i].BlockStart, entries[i].BlockEnd
-		// The separator is "\n" on its own, or "\r\n" on a CRLF file.
-		if start >= 2 && out[start-1] == '\n' {
-			switch {
-			case out[start-2] == '\n':
-				start--
-			case out[start-2] == '\r' && start >= 3 && out[start-3] == '\n':
-				start -= 2
-			}
-		}
-		out = append(out[:start:start], out[end:]...)
-	}
-	return out
 }
 
 func newPathMigrateCmd() *cobra.Command {
@@ -98,7 +77,7 @@ func runPathMigrate(c *cobra.Command, shellFlag string, dryRun, yes, force bool)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", rc, err)
 	}
-	blocks := len(findPathManagedEntries(rcData))
+	blocks := len(pathblock.FindEntries(rcData))
 
 	if dryRun {
 		if err := runPathHook(c, shellFlag, true, force, true); err != nil {
@@ -185,7 +164,7 @@ func runPathMigrate(c *cobra.Command, shellFlag string, dryRun, yes, force bool)
 		if rerr != nil {
 			return fmt.Errorf("read %s: %w", target, rerr)
 		}
-		stripped := removePathBlocks(current, findPathManagedEntries(current))
+		stripped := pathblock.RemoveBlocks(current, pathblock.FindEntries(current))
 		if _, err := writeTrackedEdit(c, s, "path migrate", rc, stripped, "path.migrate",
 			map[string]any{"blocks": blocks, "fragment": fragment}, force); err != nil {
 			return err

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // pathInterpreter is one shell the generated block can be executed by.
@@ -133,7 +135,7 @@ func runPathOrderTable(t *testing.T, interp pathInterpreter, family string, case
 		t.Run(tc.name, func(t *testing.T) {
 			dirs := pathDirs(t, all...)
 			add := dirs[tc.dir]
-			block := renderPathBlock(family, pathMarkerID(tc.add, []string{add}), goldenTime, tc.add, []string{add})
+			block := pathblock.Render(family, pathblock.MarkerID(tc.add, []string{add}), goldenTime, tc.add, []string{add})
 			start := strings.Join(mapDirs(dirs, tc.start), ":")
 			want := mapDirs(dirs, tc.want)
 
@@ -154,22 +156,22 @@ func runPathOrderTable(t *testing.T, interp pathInterpreter, family string, case
 // requested end rather than left where it is, and a duplicate sitting
 // elsewhere on PATH collapses into that one entry.
 var promoteTable = []pathOrderCase{
-	{"promotes existing", []string{"a", "b", "c"}, pathDirectionPrepend, "b", []string{"b", "a", "c"}},
-	{"adds missing", []string{"a", "c"}, pathDirectionPrepend, "b", []string{"b", "a", "c"}},
-	{"collapses duplicates", []string{"a", "b", "c", "b"}, pathDirectionPrepend, "b", []string{"b", "a", "c"}},
-	{"append moves last", []string{"a", "b", "c"}, pathDirectionAppend, "b", []string{"a", "c", "b"}},
-	{"append adds missing", []string{"a", "c"}, pathDirectionAppend, "b", []string{"a", "c", "b"}},
+	{"promotes existing", []string{"a", "b", "c"}, pathblock.DirectionPrepend, "b", []string{"b", "a", "c"}},
+	{"adds missing", []string{"a", "c"}, pathblock.DirectionPrepend, "b", []string{"b", "a", "c"}},
+	{"collapses duplicates", []string{"a", "b", "c", "b"}, pathblock.DirectionPrepend, "b", []string{"b", "a", "c"}},
+	{"append moves last", []string{"a", "b", "c"}, pathblock.DirectionAppend, "b", []string{"a", "c", "b"}},
+	{"append adds missing", []string{"a", "c"}, pathblock.DirectionAppend, "b", []string{"a", "c", "b"}},
 }
 
 // fishPromoteTable is promoteTable minus the collapsing. fish_add_path
 // --move promotes the entry it manages but leaves a duplicate that was
 // already elsewhere on PATH, measured against fish 3.7 on CI.
 var fishPromoteTable = []pathOrderCase{
-	{"promotes existing", []string{"a", "b", "c"}, pathDirectionPrepend, "b", []string{"b", "a", "c"}},
-	{"adds missing", []string{"a", "c"}, pathDirectionPrepend, "b", []string{"b", "a", "c"}},
-	{"keeps pre-existing duplicate", []string{"a", "b", "c", "b"}, pathDirectionPrepend, "b", []string{"b", "a", "c", "b"}},
-	{"append moves last", []string{"a", "b", "c"}, pathDirectionAppend, "b", []string{"a", "c", "b"}},
-	{"append adds missing", []string{"a", "c"}, pathDirectionAppend, "b", []string{"a", "c", "b"}},
+	{"promotes existing", []string{"a", "b", "c"}, pathblock.DirectionPrepend, "b", []string{"b", "a", "c"}},
+	{"adds missing", []string{"a", "c"}, pathblock.DirectionPrepend, "b", []string{"b", "a", "c"}},
+	{"keeps pre-existing duplicate", []string{"a", "b", "c", "b"}, pathblock.DirectionPrepend, "b", []string{"b", "a", "c", "b"}},
+	{"append moves last", []string{"a", "b", "c"}, pathblock.DirectionAppend, "b", []string{"a", "c", "b"}},
+	{"append adds missing", []string{"a", "c"}, pathblock.DirectionAppend, "b", []string{"a", "c", "b"}},
 }
 
 func TestPathBlock_Zsh_PathOrder(t *testing.T) {
@@ -219,7 +221,7 @@ func TestPathBlock_Posix_PathOrder(t *testing.T) {
 func runPosixProbe(t *testing.T, interp, probe string) string {
 	t.Helper()
 	dirs := pathDirs(t, "a")
-	block := renderPathBlock("posix", "deadbeef", goldenTime, pathDirectionPrepend, []string{dirs["a"]})
+	block := pathblock.Render("posix", "deadbeef", goldenTime, pathblock.DirectionPrepend, []string{dirs["a"]})
 	file := filepath.Join(t.TempDir(), "block")
 	if err := os.WriteFile(file, []byte(block), 0o644); err != nil {
 		t.Fatalf("write block: %v", err)
@@ -243,10 +245,10 @@ func TestPathBlock_Posix_NoEmptyComponent(t *testing.T) {
 	for _, sh := range posixInterpreters {
 		t.Run(strings.TrimPrefix(sh, "/bin/"), func(t *testing.T) {
 			p := lookInterpreter(t, sh)
-			for _, direction := range []string{pathDirectionPrepend, pathDirectionAppend} {
+			for _, direction := range []string{pathblock.DirectionPrepend, pathblock.DirectionAppend} {
 				t.Run(direction, func(t *testing.T) {
 					dirs := pathDirs(t, "a")
-					block := renderPathBlock("posix", "deadbeef", goldenTime, direction, []string{dirs["a"]})
+					block := pathblock.Render("posix", "deadbeef", goldenTime, direction, []string{dirs["a"]})
 					file := filepath.Join(t.TempDir(), "block")
 					if err := os.WriteFile(file, []byte(block), 0o644); err != nil {
 						t.Fatalf("write block: %v", err)
@@ -301,7 +303,7 @@ func TestPathBlock_Posix_UnsetsLoopVariables(t *testing.T) {
 func TestPathBlock_Zsh_UnsetsLoopVariable(t *testing.T) {
 	zsh := lookInterpreter(t, "zsh")
 	dirs := pathDirs(t, "a")
-	block := renderPathBlock("zsh", "deadbeef", goldenTime, pathDirectionPrepend, []string{dirs["a"]})
+	block := pathblock.Render("zsh", "deadbeef", goldenTime, pathblock.DirectionPrepend, []string{dirs["a"]})
 	file := filepath.Join(t.TempDir(), "block")
 	if err := os.WriteFile(file, []byte(block), 0o644); err != nil {
 		t.Fatalf("write block: %v", err)
@@ -324,8 +326,8 @@ func TestPathBlock_Zsh_UnsetsLoopVariable(t *testing.T) {
 func TestPathBlock_Fish_SkipsMissingDir(t *testing.T) {
 	fish := lookInterpreter(t, "fish")
 	missing := filepath.Join(t.TempDir(), "not-created")
-	block := renderPathBlock("fish", pathMarkerID(pathDirectionPrepend, []string{missing}),
-		goldenTime, pathDirectionPrepend, []string{missing})
+	block := pathblock.Render("fish", pathblock.MarkerID(pathblock.DirectionPrepend, []string{missing}),
+		goldenTime, pathblock.DirectionPrepend, []string{missing})
 
 	interp := pathInterpreter{
 		name:      "fish",
@@ -352,8 +354,8 @@ func TestPathBlock_Posix_AddsMissingDir(t *testing.T) {
 				argv = append(argv, "-f")
 			}
 			missing := filepath.Join(t.TempDir(), "not-created")
-			block := renderPathBlock(tc.family, pathMarkerID(pathDirectionPrepend, []string{missing}),
-				goldenTime, pathDirectionPrepend, []string{missing})
+			block := pathblock.Render(tc.family, pathblock.MarkerID(pathblock.DirectionPrepend, []string{missing}),
+				goldenTime, pathblock.DirectionPrepend, []string{missing})
 			interp := pathInterpreter{name: tc.sh, argv: argv, echoCmd: `echo "$PATH"`, split: splitColon}
 			got := runPathBlock(t, interp, block, "/usr/bin", []string{missing}, 1)
 			if !equalStrings(got, []string{missing}) {

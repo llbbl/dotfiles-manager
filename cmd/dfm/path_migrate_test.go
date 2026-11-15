@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/llbbl/dotfiles-manager/internal/config"
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 	"github.com/llbbl/dotfiles-manager/internal/tracker"
 )
 
@@ -46,8 +47,8 @@ func runPathCmd(t *testing.T, ctx context.Context, args ...string) string {
 func seedZshrc(t *testing.T, home string, dirs ...string) string {
 	t.Helper()
 	rc := filepath.Join(home, ".zshrc")
-	writeFileBytes(t, rc, zshrcUserContent+"\n"+renderPathBlock("zsh",
-		pathMarkerID(pathDirectionPrepend, dirs), goldenTime, pathDirectionPrepend, dirs))
+	writeFileBytes(t, rc, zshrcUserContent+"\n"+pathblock.Render("zsh",
+		pathblock.MarkerID(pathblock.DirectionPrepend, dirs), goldenTime, pathblock.DirectionPrepend, dirs))
 	return rc
 }
 
@@ -69,7 +70,7 @@ func trackFile(t *testing.T, ctx context.Context, path string) {
 	}
 }
 
-func fragmentPath() string { return config.FragmentPath(pathFragmentPosixName) }
+func fragmentPath() string { return config.FragmentPath(pathblock.FragmentPosixName) }
 
 // The hazard this whole change exists to close: writePathFragment used
 // to regenerate the fragment from the rc file unconditionally, so a hook
@@ -117,7 +118,7 @@ func TestPathMigrate_MovesBlocksAndFlipsSwitch(t *testing.T) {
 		t.Error("fragment does not carry the managed dir")
 	}
 	for _, f := range []string{".zshenv", ".zprofile"} {
-		if !bytes.Contains(readFileBytes(t, filepath.Join(home, f)), []byte(pathHookOpenMarker)) {
+		if !bytes.Contains(readFileBytes(t, filepath.Join(home, f)), []byte(pathblock.HookOpenMarker)) {
 			t.Errorf("%s has no hook", f)
 		}
 	}
@@ -338,30 +339,6 @@ func TestPathAdd_WithoutMigrate_TargetsRcFile(t *testing.T) {
 	}
 	if _, err := os.Stat(mustConfigPath(t)); !os.IsNotExist(err) {
 		t.Errorf("path add wrote config.toml: %v", err)
-	}
-}
-
-// A CRLF rc file gets the same byte-identical promise as an LF one: the
-// blank separator an add wrote is "\r\n" there, not "\n".
-func TestRemovePathBlocks_CRLFSeparator(t *testing.T) {
-	for _, tc := range []struct{ name, eol string }{
-		{"lf", "\n"},
-		{"crlf", "\r\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			head := "# mine" + tc.eol + "export EDITOR=vim" + tc.eol
-			block := renderPathBlock("posix", pathMarkerID(pathDirectionPrepend, []string{"/a"}),
-				goldenTime, pathDirectionPrepend, []string{"/a"})
-			if tc.eol == "\r\n" {
-				block = strings.ReplaceAll(block, "\n", "\r\n")
-			}
-			content := []byte(head + tc.eol + block)
-
-			got := removePathBlocks(content, findPathManagedEntries(content))
-			if string(got) != head {
-				t.Errorf("after remove = %q, want %q", got, head)
-			}
-		})
 	}
 }
 

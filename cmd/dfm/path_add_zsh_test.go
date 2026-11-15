@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // A .zshrc target renders the zsh body, not the POSIX one.
@@ -42,7 +44,7 @@ func TestPathAdd_Zsh_RendersZshBody(t *testing.T) {
 			t.Errorf("unexpected posix fragment %q in zsh output:\n%s", frag, got)
 		}
 	}
-	if entries := findPathManagedEntries(got); len(entries) != 1 {
+	if entries := pathblock.FindEntries(got); len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1:\n%s", len(entries), got)
 	}
 }
@@ -72,8 +74,8 @@ func TestPathAdd_Zsh_AppendDirection(t *testing.T) {
 func TestPathAdd_Zsh_ReplacesLegacyPosixBlock(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 
-	legacyID := pathMarkerID(pathDirectionPrepend, []string{"/a"})
-	legacy := renderPathBlockBash(legacyID, time.Now().UTC().Add(-time.Hour), pathDirectionPrepend, []string{"/a"})
+	legacyID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a"})
+	legacy := pathblock.RenderBash(legacyID, time.Now().UTC().Add(-time.Hour), pathblock.DirectionPrepend, []string{"/a"})
 	canonical, _ := writeTrackedNamed(t, ctx, ".zshrc", "# zshrc\n\n"+legacy+"\nexport EDITOR=vi\n")
 
 	cmd := newPathCmd()
@@ -90,11 +92,11 @@ func TestPathAdd_Zsh_ReplacesLegacyPosixBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	entries := findPathManagedEntries(got)
+	entries := pathblock.FindEntries(got)
 	if len(entries) != 1 {
 		t.Fatalf("got %d managed entries, want 1:\n%s", len(entries), got)
 	}
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
 	if entries[0].Marker.ID != wantID {
 		t.Errorf("marker id = %q, want %q", entries[0].Marker.ID, wantID)
 	}

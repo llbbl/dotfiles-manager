@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/llbbl/dotfiles-manager/internal/pathblock"
 )
 
 // §7 case #11: default tab-separated output.
@@ -43,8 +45,8 @@ func TestPathList_DefaultOutput(t *testing.T) {
 		t.Fatalf("missing header in:\n%s", got)
 	}
 
-	prependID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
-	appendID := pathMarkerID(pathDirectionAppend, []string{"/c"})
+	prependID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
+	appendID := pathblock.MarkerID(pathblock.DirectionAppend, []string{"/c"})
 
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	// Header + 3 rows.
@@ -104,8 +106,8 @@ func TestPathList_JSON(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 3:\n%s", len(rows), out.String())
 	}
-	prependID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
-	appendID := pathMarkerID(pathDirectionAppend, []string{"/c"})
+	prependID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
+	appendID := pathblock.MarkerID(pathblock.DirectionAppend, []string{"/c"})
 	wantRows := []map[string]string{
 		{"dir": "/a", "direction": "prepend", "marker_id": prependID},
 		{"dir": "/b", "direction": "prepend", "marker_id": prependID},
@@ -157,7 +159,7 @@ func TestPathList_EmptyFile(t *testing.T) {
 	}
 }
 
-// Fish rc works the same way: findPathManagedEntries is shell-agnostic.
+// Fish rc works the same way: pathblock.FindEntries is shell-agnostic.
 func TestPathList_FishRc(t *testing.T) {
 	ctx, _, _ := setupEditCmdEnv(t)
 	canonical, _ := writeTrackedNamed(t, ctx, "config.fish", "")
@@ -194,7 +196,7 @@ func TestPathList_FishRc(t *testing.T) {
 	}
 }
 
-// Marker id in list output matches the per-entry pathMarkerID derived
+// Marker id in list output matches the per-entry pathblock.MarkerID derived
 // from (direction, dirs). Already covered indirectly above, but pin it
 // down with an explicit assertion against the deterministic id.
 func TestPathList_MarkerIDMatches(t *testing.T) {
@@ -228,7 +230,7 @@ func TestPathList_MarkerIDMatches(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	wantID := pathMarkerID(pathDirectionPrepend, []string{"/x", "/y"})
+	wantID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/x", "/y"})
 	for _, r := range rows {
 		if r["marker_id"] != wantID {
 			t.Errorf("marker_id = %q, want %q", r["marker_id"], wantID)
@@ -269,7 +271,7 @@ esac
 		}
 	}
 
-	prependID := pathMarkerID(pathDirectionPrepend, []string{"/a", "/b"})
+	prependID := pathblock.MarkerID(pathblock.DirectionPrepend, []string{"/a", "/b"})
 
 	// Tab mode: header + exactly two rows, neither mentioning PNPM_HOME.
 	cmd := newPathCmd()
