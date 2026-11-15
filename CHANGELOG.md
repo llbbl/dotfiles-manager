@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.4] - 2026-11-15
+
+### Refactoring
+
+- Share one snapshot, write and record helper across mutating commands
 ## [1.14.3] - 2026-11-15
 
 ### Miscellaneous
