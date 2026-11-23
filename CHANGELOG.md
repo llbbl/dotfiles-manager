@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.9] - 2026-11-23
+
+### Refactoring
+
+- Move the path import scanner into internal/pathimport
 ## [1.14.8] - 2026-11-15
 
 ### Refactoring
