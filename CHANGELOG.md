@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.10] - 2026-11-24
+
+### Miscellaneous
+
+- deps: Bump the go-deps group across 1 directory with 3 updates
 ## [1.14.9] - 2026-11-23
 
 ### Refactoring
